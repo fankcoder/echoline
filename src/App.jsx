@@ -18,6 +18,7 @@ import {
   Library,
   ListMusic,
   Maximize,
+  Moon,
   Pause,
   Pencil,
   Play,
@@ -27,6 +28,7 @@ import {
   Search,
   Shuffle,
   Sparkles,
+  Sun,
   Timer,
   Trash2,
   Volume2,
@@ -252,7 +254,8 @@ export default function App() {
   const [notice, setNotice] = useState('');
   const [panel, setPanel] = useState('transcript');
   const [query, setQuery] = useState('');
-  const [videoHidden, setVideoHidden] = useState(false);
+  const [videoHidden, setVideoHidden] = useState(() => readStorage('echoline-video-hidden', false));
+  const [darkMode, setDarkMode] = useState(() => readStorage('echoline-dark-mode', false));
   const [reviewGroup, setReviewGroup] = useState(0);
   const [reviewDeck, setReviewDeck] = useState([]);
   const [reviewPosition, setReviewPosition] = useState(0);
@@ -324,6 +327,15 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem('echoline-study-stats', JSON.stringify(stats));
   }, [stats]);
+
+  useEffect(() => {
+    localStorage.setItem('echoline-video-hidden', JSON.stringify(videoHidden));
+  }, [videoHidden]);
+
+  useEffect(() => {
+    localStorage.setItem('echoline-dark-mode', JSON.stringify(darkMode));
+    document.documentElement.style.colorScheme = darkMode ? 'dark' : 'light';
+  }, [darkMode]);
 
   useEffect(() => {
     if (!isPlaying) return undefined;
@@ -789,7 +801,7 @@ export default function App() {
   }[phase];
 
   return (
-    <div className="app-shell">
+    <div className={`app-shell ${darkMode ? 'dark-mode' : ''}`}>
       <header className="topbar">
         <div className="brand">
           <div className="brand-mark"><span /><span /><span /><span /></div>
@@ -808,6 +820,9 @@ export default function App() {
           <div className="topbar-context"><Library size={17} /><span><strong>课程管理</strong><small>整理课程与学习内容</small></span></div>
         )}
         <div className="top-actions">
+          <button className="theme-button" onClick={() => setDarkMode((value) => !value)} title={darkMode ? '切换到浅色模式' : '切换到暗色模式'} aria-label={darkMode ? '切换到浅色模式' : '切换到暗色模式'} aria-pressed={darkMode}>
+            {darkMode ? <Sun size={16} /> : <Moon size={16} />}
+          </button>
           <button className="stats-button" onClick={() => setStatsOpen(true)} title="学习统计">
             <BarChart3 size={16} /><span>{formatStudyTime(stats.totalSeconds)}</span>
           </button>
@@ -973,7 +988,7 @@ export default function App() {
             <Volume2 size={17} className="volume-icon" />
             <input className="volume" aria-label="音量" type="range" min="0" max="1" step="0.05" value={volume} onChange={(event) => { const next = Number(event.target.value); setVolume(next); videoRef.current.volume = next; }} />
             <button className="speed-button" onClick={() => { const options = [0.75, 1, 1.25, 1.5]; const next = options[(options.indexOf(speed) + 1) % options.length]; setSpeed(next); videoRef.current.playbackRate = next; }} title="播放速度">{speed}×</button>
-            <button className="icon-button" onClick={() => setVideoHidden((value) => !value)} title={videoHidden ? '显示视频' : '隐藏视频，仅听音频'} aria-label={videoHidden ? '显示视频' : '隐藏视频，仅听音频'}>{videoHidden ? <Eye size={17} /> : <EyeOff size={17} />}</button>
+            <button className="icon-button" onClick={() => setVideoHidden((value) => !value)} title={videoHidden ? '显示视频' : '隐藏视频，仅听音频'} aria-label={videoHidden ? '显示视频' : '隐藏视频，仅听音频'} aria-pressed={videoHidden}>{videoHidden ? <Eye size={17} /> : <EyeOff size={17} />}</button>
             <button className="icon-button" onClick={() => videoRef.current.requestFullscreen?.()} title="全屏" aria-label="全屏"><Maximize size={17} /></button>
           </div>
 
