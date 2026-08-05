@@ -1,0 +1,358 @@
+WEBVTT
+X-TIMESTAMP-MAP=LOCAL:00:00:00.000,MPEGTS:127826
+
+1
+00:00:01.926 --> 00:00:07.840
+It is now 2026, and prompting AI models is very different from when CAT GPT first came out in 2022.
+
+2
+00:00:08.720 --> 00:00:14.880
+Using AI well is one of the most impactful skills you can develop. And people that are not yet at
+
+3
+00:00:14.880 --> 00:00:21.440
+the cutting edge of AI usage often run into AI generating frustrating outputs. I want to make
+
+4
+00:00:21.440 --> 00:00:27.360
+sure you're an expert prompter and can take advantage of today's AI tools, which are much
+
+5
+00:00:27.360 --> 00:00:33.759
+more powerful than they were even a year ago. Let's take a look at two different experiences,
+
+6
+00:00:33.759 --> 00:00:41.919
+the AI novice and the AI power user. Many AI experts have learned to use it to answer hard
+
+7
+00:00:41.919 --> 00:00:48.639
+questions. In contrast, many people, including AI novices, may have gotten used to using AI for
+
+8
+00:00:48.639 --> 00:00:54.080
+simple questions, as if you were prompting it like a Google search. So you ask it,
+
+9
+00:00:54.080 --> 00:01:00.240
+does Taco Bell still have the double decker taco? And maybe you get an answer like that,
+
+10
+00:01:01.279 --> 00:01:09.199
+which is fine. But if you have much harder questions, you can also ask it of the AI and
+
+11
+00:01:09.199 --> 00:01:15.760
+give it time to think. For example, if you're looking to buy a car, you can upload to most
+
+12
+00:01:15.760 --> 00:01:22.800
+of the commercial services like CAT GPT, Gemini, Anthropics Cloud, or others, a set of documents,
+
+13
+00:01:22.800 --> 00:01:28.000
+including car specs, quotes, insurance plans, and ask it, what are the trade-offs for these
+
+14
+00:01:28.000 --> 00:01:34.000
+different cars I'm thinking about? And tell it to read everything and to think hard before answering.
+
+15
+00:01:35.040 --> 00:01:41.040
+And this can cause AI to spend many seconds or even minutes to think and then compile a
+
+16
+00:01:41.040 --> 00:01:45.919
+detailed report for you. I find this a huge time saver for a lot of things I have to do.
+
+17
+00:01:46.879 --> 00:01:53.199
+Another example, AI power users have learned to provide the right context or the right background
+
+18
+00:01:53.199 --> 00:02:00.400
+information to the AI to set it up for successfully answering your question. In contrast, I see some
+
+19
+00:02:00.400 --> 00:02:07.839
+AI novices use a short prompt and hope that AI will fill in the blanks. But if you think of AI
+
+20
+00:02:07.839 --> 00:02:14.320
+as maybe being akin to a really smart, fresh college grad, highly motivated, but that doesn't
+
+21
+00:02:14.639 --> 00:02:19.600
+really know that much about you yet, then a short prompt sometimes doesn't give it enough
+
+22
+00:02:19.600 --> 00:02:25.919
+information or enough background context to answer your question accurately. So if you tell AI,
+
+23
+00:02:25.919 --> 00:02:32.000
+please write a good self-review to send to my boss. The AI doesn't know what you've actually
+
+24
+00:02:32.000 --> 00:02:36.479
+done over the last year because you haven't told it yet. And it might write a very generic
+
+25
+00:02:36.479 --> 00:02:43.199
+self-review, which isn't that helpful. In contrast, I find that AI power users
+
+26
+00:02:43.199 --> 00:02:48.559
+almost have empathy for the AI. I don't want to overly anthropomorphize the AI,
+
+27
+00:02:48.559 --> 00:02:53.839
+but if you could put yourself in the shoes of someone getting a set of instructions from you,
+
+28
+00:02:53.839 --> 00:02:58.639
+you can ask yourself, will they actually know enough about you to do a good job on the task
+
+29
+00:02:58.639 --> 00:03:04.399
+you're assigning them? So an AI power user in comparison might upload a lot of information
+
+30
+00:03:04.399 --> 00:03:09.119
+to the AI, maybe give it a screenshot of a project tracker, showing what you've worked on,
+
+31
+00:03:09.679 --> 00:03:15.759
+recent project dogs, maybe voice memo notes where you talk through the projects and then tell it to
+
+32
+00:03:15.759 --> 00:03:22.559
+write a self-review to send to my boss. And that could do a much better job capturing what you're
+
+33
+00:03:22.559 --> 00:03:30.880
+most proud of. One of the things power users have learned to do is how to prompt AI to get honest
+
+34
+00:03:30.880 --> 00:03:38.080
+feedback. A big problem with AI is it often wants to please you. In fact, many AI systems were
+
+35
+00:03:38.080 --> 00:03:45.679
+trained to try to make the users happy. And if you ask it a biased question, it will often give
+
+36
+00:03:45.679 --> 00:03:52.399
+a biased answer because it's trying to tell you what it thinks you want to hear. For example,
+
+37
+00:03:52.399 --> 00:03:59.759
+if you say, I have a great business idea, mobile tie dyeing, critique it. Because you called it
+
+38
+00:03:59.759 --> 00:04:06.000
+a great business idea and you're saying it's your idea, the AI will naturally want to please you and
+
+39
+00:04:06.000 --> 00:04:14.160
+say, what a great idea. We sometimes call this sycophancy. And it's well known that if you give
+
+40
+00:04:14.160 --> 00:04:19.600
+even a hint of what answer you're hoping for, there's a good chance the AI will just reflect
+
+41
+00:04:19.600 --> 00:04:27.200
+back your preferences or your preconceptions. In contrast, AI power users tend to ask neutral
+
+42
+00:04:27.200 --> 00:04:32.239
+questions that don't give any hint to the AI for what answer you're hoping for or not hoping for.
+
+43
+00:04:32.959 --> 00:04:40.000
+Or if you give it a rubric or grading criteria to tell the AI how to form the basis for its answer,
+
+44
+00:04:40.559 --> 00:04:46.880
+that also forces it to be more objective. For example, if you were to say, please analyze the
+
+45
+00:04:46.880 --> 00:04:53.040
+following business idea objectively, mobile tie dyeing. And don't just make up a bunch of things
+
+46
+00:04:53.040 --> 00:04:59.119
+for what you think. Use the rubric of the grading criteria above, such as, is there a problem? Is
+
+47
+00:04:59.119 --> 00:05:04.079
+there a market? Do I have a competitive advantage? If you give instructions like this to the AI,
+
+48
+00:05:04.079 --> 00:05:09.040
+then the AI doesn't know. Are you hoping it'll tell you it's a great idea or that it will save
+
+49
+00:05:09.040 --> 00:05:14.320
+you from spending a lot of time on the bad business idea? And it's much more likely to then
+
+50
+00:05:14.320 --> 00:05:20.640
+tell you something like, oh, this idea is an 8 out of 100 and also why the score's low.
+
+51
+00:05:21.920 --> 00:05:28.160
+In case you run a mobile tie dye business, I wish you really best of luck. And AI could also
+
+52
+00:05:28.480 --> 00:05:33.440
+ask some useful questions to help you think through how to make the business even better.
+
+53
+00:05:34.480 --> 00:05:41.040
+Lastly, I found that AI novices and AI users ask AI to write in very different ways.
+
+54
+00:05:41.679 --> 00:05:47.040
+Novices will just ask AI to write stuff, like write a blog post about the BlackBerry.
+
+55
+00:05:48.079 --> 00:05:53.440
+And it will generate a bunch of text that maybe looks like this, which sounds like AI slop.
+
+56
+00:05:54.000 --> 00:05:58.880
+It's a bunch of generic text that's just not that interesting and takes up a lot of space.
+
+57
+00:06:00.000 --> 00:06:06.880
+In contrast, an AI power user will often not ask the AI system to just jump in writing directly,
+
+58
+00:06:06.880 --> 00:06:13.600
+but instead ask AI to first outline an article and then critique the outline and maybe iterate
+
+59
+00:06:13.600 --> 00:06:18.559
+a few times with the outline to shape the article. And only then ask AI to start to
+
+60
+00:06:18.559 --> 00:06:24.959
+draft the final article. So give it a set of uploaded notes as context. An expert may say,
+
+61
+00:06:24.959 --> 00:06:29.760
+outline a blog post about the BlackBerry based on my notes so it knows what you want to talk about.
+
+62
+00:06:30.799 --> 00:06:37.440
+And the AI may start by giving an outline. And you might then give feedback to the AI about what
+
+63
+00:06:37.440 --> 00:06:42.640
+you like and what you don't like about the outline. And even iterate a few times, have a
+
+64
+00:06:42.640 --> 00:06:47.679
+few back and forth rounds before you have an outline that you're satisfied with. And maybe
+
+65
+00:06:47.679 --> 00:06:52.799
+only then expand the outline into bullet points. And maybe even go back and forth a few times to
+
+66
+00:06:52.799 --> 00:06:59.519
+critique the bullet points before you're satisfied with that, and then expand it into the final text.
+
+67
+00:07:01.200 --> 00:07:06.559
+This type of power user workflow is much more likely to generate some text that you're happy
+
+68
+00:07:06.559 --> 00:07:13.920
+with, as opposed to AI slop. And in this type of workflow, you're treating the AI as a thinking
+
+69
+00:07:13.920 --> 00:07:19.920
+partner to almost help you brainstorm and explore different options for what you might want to write.
+
+70
+00:07:20.799 --> 00:07:28.079
+AI systems do make mistakes, but maybe fewer than most people think, especially if you prompt it
+
+71
+00:07:28.079 --> 00:07:36.480
+well. They made a lot more mistakes back in 2022 or 2023 than they do now. But a lot of widely
+
+72
+00:07:36.480 --> 00:07:42.399
+publicized mistakes that AI has made, some of which went viral on social media, has made people
+
+73
+00:07:42.399 --> 00:07:49.040
+think that AI maybe makes even more mistakes than it actually does. There's a well-puzzle-sized one
+
+74
+00:07:49.040 --> 00:07:54.000
+where people asked it how many R's are there in the word strawberry, and it thinks there are two R's.
+
+75
+00:07:54.559 --> 00:08:00.559
+And here's one that I found amusing. I want to wash my car. Should I walk or drive there? And
+
+76
+00:08:00.559 --> 00:08:07.040
+the AI says, walk, which would leave you there while you wash your car. But these viral examples are not
+
+77
+00:08:07.040 --> 00:08:14.799
+representative of AI capabilities. In contrast, PAR users know that AI can deliver significant
+
+78
+00:08:14.799 --> 00:08:21.679
+value through tasks like doing deep research and writing research reports, or taking your personal
+
+79
+00:08:21.679 --> 00:08:29.119
+data, like your health or heart rate or running time data, and analyzing that for you. Or something
+
+80
+00:08:29.119 --> 00:08:36.479
+we'll talk about later, even building websites for you. I've seen being an AI PAR user
+
+81
+00:08:36.479 --> 00:08:42.799
+tremendously benefit individuals, as well as their businesses. It'll save you time and improve
+
+82
+00:08:42.799 --> 00:08:49.760
+your professional and personal lives. It'll help you to build lots of cool things. You'll learn how later
+
+83
+00:08:49.760 --> 00:08:57.599
+in these videos. And being able to prompt AI at an expert level is a highly in-demand job skill,
+
+84
+00:08:57.599 --> 00:09:04.239
+no matter what job role you're in. In the rest of these videos, I hope to take you from wherever
+
+85
+00:09:04.320 --> 00:09:13.359
+you are today to being an AI PAR user. Much is said about AI being useful. I find using AI
+
+86
+00:09:13.359 --> 00:09:20.559
+really fun as well, and you'll see a few examples of that in these videos too. Now, one foundational
+
+87
+00:09:20.559 --> 00:09:26.479
+piece of knowledge that helps you work with AI is understanding where it gets its knowledge from,
+
+88
+00:09:27.119 --> 00:09:31.840
+so that you can better predict when it'll get something right, and when you maybe shouldn't
+
+89
+00:09:31.840 --> 00:09:39.200
+count on its answer. Let's go on to the next video to learn about how AI gets its knowledge.
