@@ -241,6 +241,7 @@ export default function App() {
   const [newCourseName, setNewCourseName] = useState('');
   const [stats, setStats] = useState(() => readStorage('echoline-study-stats', { totalSeconds: 0, videos: {} }));
   const [statsOpen, setStatsOpen] = useState(false);
+  const [appView, setAppView] = useState('player');
 
   const setLearningPhase = useCallback((value) => {
     phaseRef.current = value;
@@ -595,8 +596,27 @@ export default function App() {
     window.setTimeout(() => setNotice(''), 2200);
   };
 
+  const openCourseManager = () => {
+    videoRef.current?.pause();
+    setWordTooltip(null);
+    setCreatingCourse(false);
+    setAppView('courses');
+  };
+
+  const openCourseItem = (courseId, item) => {
+    setSelectedCourseId(courseId);
+    setUrl(item.url);
+    setCurrentLessonUrl(item.url);
+    setCreatingCourse(false);
+    setAppView('player');
+    setNotice(`已打开“${item.title}”`);
+    window.setTimeout(() => setNotice(''), 1800);
+  };
+
   const learnedVideos = Object.values(stats.videos).filter((item) => item.learned);
   const learnedCourses = courses.filter((course) => course.items.some((item) => stats.videos[item.canonicalUrl]?.learned));
+  const managedCourse = courses.find((course) => course.id === selectedCourseId) || courses[0];
+  const savedLessonCount = courses.reduce((total, course) => total + course.items.length, 0);
   const phaseLabel = {
     idle: '准备开始',
     listening: '听原句',
@@ -612,22 +632,99 @@ export default function App() {
           <div className="brand-mark"><span /><span /><span /><span /></div>
           <div><strong>EchoLine</strong><small>AI English Studio</small></div>
         </div>
-        <div className="course-import">
-          <span className="source-label">课程来源</span>
-          <input aria-label="课程网址" value={url} onChange={(event) => setUrl(event.target.value)} onKeyDown={(event) => event.key === 'Enter' && handleImport()} />
-          <button className="primary-button" onClick={handleImport} disabled={importState === 'loading'}>
-            {importState === 'loading' ? <span className="loader" /> : <Import size={16} />}
-            {importState === 'loading' ? '解析中' : '导入'}
-          </button>
-        </div>
+        {appView === 'player' ? (
+          <div className="course-import">
+            <span className="source-label">课程来源</span>
+            <input aria-label="课程网址" value={url} onChange={(event) => setUrl(event.target.value)} onKeyDown={(event) => event.key === 'Enter' && handleImport()} />
+            <button className="primary-button" onClick={handleImport} disabled={importState === 'loading'}>
+              {importState === 'loading' ? <span className="loader" /> : <Import size={16} />}
+              {importState === 'loading' ? '解析中' : '导入'}
+            </button>
+          </div>
+        ) : (
+          <div className="topbar-context"><Library size={17} /><span><strong>课程管理</strong><small>整理课程与学习内容</small></span></div>
+        )}
         <div className="top-actions">
           <button className="stats-button" onClick={() => setStatsOpen(true)} title="学习统计">
             <BarChart3 size={16} /><span>{formatStudyTime(stats.totalSeconds)}</span>
           </button>
-          <button className="icon-button subtle" title="返回课程库" aria-label="返回课程库"><ArrowLeft size={19} /></button>
+          <button className="manage-course-button" onClick={appView === 'player' ? openCourseManager : () => { setCreatingCourse(false); setAppView('player'); }}>
+            {appView === 'player' ? <Library size={16} /> : <ArrowLeft size={16} />}
+            {appView === 'player' ? '课程管理' : '返回播放器'}
+          </button>
         </div>
       </header>
 
+      {appView === 'courses' ? (
+        <main className="course-manager-page">
+          <section className="manager-heading">
+            <div><span className="eyebrow">Course Library</span><h1>课程管理</h1><p>管理课程分组和已经保存的学习视频。</p></div>
+            <button className="manager-create-button" onClick={() => setCreatingCourse(true)}><FolderPlus size={16} />新建课程</button>
+          </section>
+
+          {creatingCourse && (
+            <div className="manager-create-row">
+              <FolderPlus size={17} />
+              <input autoFocus value={newCourseName} onChange={(event) => setNewCourseName(event.target.value)} onKeyDown={(event) => event.key === 'Enter' && createCourse()} placeholder="输入新课程名称" aria-label="新课程名称" />
+              <button className="next-button" onClick={createCourse}><Check size={15} />创建</button>
+              <button className="icon-button" onClick={() => setCreatingCourse(false)} aria-label="取消"><X size={16} /></button>
+            </div>
+          )}
+
+          <section className="manager-summary" aria-label="课程概览">
+            <div><Library size={18} /><span><strong>{courses.length}</strong><small>课程集</small></span></div>
+            <div><ListMusic size={18} /><span><strong>{savedLessonCount}</strong><small>已保存视频</small></span></div>
+            <div><Check size={18} /><span><strong>{learnedVideos.length}</strong><small>已学视频</small></span></div>
+            <div><Timer size={18} /><span><strong>{formatStudyTime(stats.totalSeconds)}</strong><small>累计学习</small></span></div>
+          </section>
+
+          <div className="course-library-layout">
+            <nav className="course-navigation" aria-label="课程列表">
+              <div className="course-navigation-head"><strong>全部课程</strong><span>{courses.length}</span></div>
+              {courses.map((course) => {
+                const learnedCount = course.items.filter((item) => stats.videos[item.canonicalUrl]?.learned).length;
+                return (
+                  <button className={course.id === managedCourse?.id ? 'active' : ''} key={course.id} onClick={() => setSelectedCourseId(course.id)}>
+                    <span className="course-nav-icon"><Library size={16} /></span>
+                    <span><strong>{course.name}</strong><small>{course.items.length} 个视频 · {learnedCount} 个已学</small></span>
+                    <ChevronRight size={15} />
+                  </button>
+                );
+              })}
+            </nav>
+
+            <section className="course-detail">
+              {managedCourse ? (
+                <>
+                  <div className="course-detail-head">
+                    <div><span>当前课程</span><h2>{managedCourse.name}</h2><p>创建于 {new Date(managedCourse.createdAt).toLocaleDateString('zh-CN')}</p></div>
+                    <strong>{managedCourse.items.length} 个视频</strong>
+                  </div>
+                  <div className="course-item-head"><span>学习内容</span><span>学习进度</span><span>操作</span></div>
+                  <div className="course-item-list">
+                    {managedCourse.items.map((item, index) => {
+                      const itemStats = stats.videos[item.canonicalUrl];
+                      return (
+                        <article className="course-item" key={item.canonicalUrl}>
+                          <span className="course-item-index">{String(index + 1).padStart(2, '0')}</span>
+                          <div className="course-item-title"><strong>{item.title}</strong><small>{new URL(item.url).hostname} · 添加于 {new Date(item.addedAt).toLocaleDateString('zh-CN')}</small></div>
+                          <div className="course-item-progress"><span className={itemStats?.learned ? 'learned' : ''}>{itemStats?.learned ? '已学习' : '未开始'}</span><small>{formatStudyTime(itemStats?.studiedSeconds || 0)}</small></div>
+                          <button className="open-course-item" onClick={() => openCourseItem(managedCourse.id, item)}><Play size={14} fill="currentColor" />进入学习</button>
+                        </article>
+                      );
+                    })}
+                    {!managedCourse.items.length && (
+                      <div className="empty-course"><ListMusic size={30} /><strong>这个课程还没有视频</strong><span>回到播放器，将当前视频保存到“{managedCourse.name}”。</span><button className="next-button" onClick={() => { setCreatingCourse(false); setAppView('player'); }}><ArrowLeft size={15} />返回播放器</button></div>
+                    )}
+                  </div>
+                </>
+              ) : (
+                <div className="empty-course"><Library size={30} /><strong>还没有课程</strong><button className="next-button" onClick={() => setCreatingCourse(true)}><FolderPlus size={15} />新建课程</button></div>
+              )}
+            </section>
+          </div>
+        </main>
+      ) : (
       <main className="workspace">
         <section className="player-column">
           <div className="lesson-heading">
@@ -800,6 +897,7 @@ export default function App() {
           </div>}
         </aside>
       </main>
+      )}
 
       {wordTooltip && (
         <div
