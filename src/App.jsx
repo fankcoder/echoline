@@ -19,12 +19,16 @@ import {
   ListMusic,
   Maximize,
   Pause,
+  Pencil,
   Play,
+  Plus,
   RotateCcw,
+  Save,
   Search,
   Shuffle,
   Sparkles,
   Timer,
+  Trash2,
   Volume2,
   X,
 } from 'lucide-react';
@@ -153,6 +157,23 @@ function normalizeUrl(value) {
   }
 }
 
+function getUrlHost(value) {
+  try {
+    return new URL(value).hostname;
+  } catch {
+    return '自定义链接';
+  }
+}
+
+function isValidWebUrl(value) {
+  try {
+    const parsed = new URL(value);
+    return parsed.protocol === 'http:' || parsed.protocol === 'https:';
+  } catch {
+    return false;
+  }
+}
+
 function formatStudyTime(seconds) {
   if (seconds < 60) return `${Math.floor(seconds)} 秒`;
   const totalMinutes = Math.floor(seconds / 60);
@@ -226,6 +247,7 @@ export default function App() {
   const [wordTooltip, setWordTooltip] = useState(null);
   const [url, setUrl] = useState(COURSE_URL);
   const [currentLessonUrl, setCurrentLessonUrl] = useState(COURSE_URL);
+  const [currentLessonTitle, setCurrentLessonTitle] = useState(LESSON_TITLE);
   const [importState, setImportState] = useState('ready');
   const [notice, setNotice] = useState('');
   const [panel, setPanel] = useState('transcript');
@@ -242,6 +264,11 @@ export default function App() {
   const [stats, setStats] = useState(() => readStorage('echoline-study-stats', { totalSeconds: 0, videos: {} }));
   const [statsOpen, setStatsOpen] = useState(false);
   const [appView, setAppView] = useState('player');
+  const [courseSearch, setCourseSearch] = useState('');
+  const [editingCourseId, setEditingCourseId] = useState(null);
+  const [courseNameDraft, setCourseNameDraft] = useState('');
+  const [contentForm, setContentForm] = useState(null);
+  const [deleteTarget, setDeleteTarget] = useState(null);
 
   const setLearningPhase = useCallback((value) => {
     phaseRef.current = value;
@@ -304,7 +331,7 @@ export default function App() {
     const timer = window.setInterval(() => {
       setStats((current) => {
         const videoStats = current.videos[canonicalUrl] || {
-          title: LESSON_TITLE,
+          title: currentLessonTitle,
           url: currentLessonUrl,
           studiedSeconds: 0,
           learned: false,
@@ -325,7 +352,7 @@ export default function App() {
       });
     }, 1000);
     return () => window.clearInterval(timer);
-  }, [isPlaying, currentLessonUrl]);
+  }, [isPlaying, currentLessonUrl, currentLessonTitle]);
 
   useEffect(() => {
     if (!selectedWord) return undefined;
@@ -493,6 +520,7 @@ export default function App() {
       if (url.includes('learn.deeplearning.ai') && url.includes('de11nq6r')) {
         setImportState('done');
         setCurrentLessonUrl(url);
+        setCurrentLessonTitle(LESSON_TITLE);
         setNotice('课程、音轨与 89 句双语字幕已载入');
         playCue(0, 'listening');
       } else {
@@ -569,6 +597,124 @@ export default function App() {
     window.setTimeout(() => setNotice(''), 1800);
   };
 
+  const startRenameCourse = (course) => {
+    setEditingCourseId(course.id);
+    setCourseNameDraft(course.name);
+    setContentForm(null);
+  };
+
+  const saveCourseName = () => {
+    const name = courseNameDraft.trim();
+    if (!name || !editingCourseId) return;
+    setCourses((items) => items.map((course) => course.id === editingCourseId ? { ...course, name } : course));
+    setEditingCourseId(null);
+    setCourseNameDraft('');
+    setNotice('课程名称已更新');
+    window.setTimeout(() => setNotice(''), 1800);
+  };
+
+  const startCreateContent = (courseId) => {
+    setEditingCourseId(null);
+    setContentForm({ mode: 'create', courseId, originalCanonicalUrl: '', title: '', url: '' });
+  };
+
+  const startEditContent = (courseId, item) => {
+    setEditingCourseId(null);
+    setContentForm({
+      mode: 'edit',
+      courseId,
+      originalCanonicalUrl: item.canonicalUrl,
+      title: item.title,
+      url: item.url,
+    });
+  };
+
+  const saveContent = () => {
+    if (!contentForm) return;
+    const title = contentForm.title.trim();
+    const nextUrl = contentForm.url.trim();
+    if (!title || !nextUrl) {
+      setNotice('请填写学习内容标题和网址');
+      window.setTimeout(() => setNotice(''), 2200);
+      return;
+    }
+    if (!isValidWebUrl(nextUrl)) {
+      setNotice('请输入以 http:// 或 https:// 开头的有效网址');
+      window.setTimeout(() => setNotice(''), 2400);
+      return;
+    }
+
+    const canonicalUrl = normalizeUrl(nextUrl);
+    const course = courses.find((item) => item.id === contentForm.courseId);
+    const duplicated = course?.items.some((item) => (
+      item.canonicalUrl === canonicalUrl
+      && (contentForm.mode === 'create' || item.canonicalUrl !== contentForm.originalCanonicalUrl)
+    ));
+    if (duplicated) {
+      setNotice('该网址已存在于当前课程中');
+      window.setTimeout(() => setNotice(''), 2200);
+      return;
+    }
+
+    const oldCanonicalUrl = contentForm.originalCanonicalUrl;
+    setCourses((items) => items.map((item) => {
+      if (item.id !== contentForm.courseId) return item;
+      if (contentForm.mode === 'create') {
+        return {
+          ...item,
+          items: [...item.items, { title, url: nextUrl, canonicalUrl, addedAt: Date.now() }],
+        };
+      }
+      return {
+        ...item,
+        items: item.items.map((lesson) => lesson.canonicalUrl === oldCanonicalUrl
+          ? { ...lesson, title, url: nextUrl, canonicalUrl }
+          : lesson),
+      };
+    }));
+
+    if (contentForm.mode === 'edit' && oldCanonicalUrl !== canonicalUrl) {
+      const oldUrlStillUsed = courses.some((item) => item.items.some((lesson) => (
+        lesson.canonicalUrl === oldCanonicalUrl
+        && !(item.id === contentForm.courseId && lesson.canonicalUrl === oldCanonicalUrl)
+      )));
+      if (!oldUrlStillUsed) {
+        setStats((current) => {
+          const oldStats = current.videos[oldCanonicalUrl];
+          if (!oldStats || current.videos[canonicalUrl]) return current;
+          const videos = { ...current.videos };
+          delete videos[oldCanonicalUrl];
+          videos[canonicalUrl] = { ...oldStats, title, url: nextUrl };
+          return { ...current, videos };
+        });
+      }
+    }
+
+    setContentForm(null);
+    setNotice(contentForm.mode === 'create' ? '学习内容已添加' : '学习内容已更新');
+    window.setTimeout(() => setNotice(''), 1800);
+  };
+
+  const confirmDelete = () => {
+    if (!deleteTarget) return;
+    if (deleteTarget.type === 'course') {
+      const remaining = courses.filter((course) => course.id !== deleteTarget.courseId);
+      setCourses(remaining);
+      if (selectedCourseId === deleteTarget.courseId) setSelectedCourseId(remaining[0]?.id || '');
+      setEditingCourseId(null);
+      setContentForm(null);
+      setNotice(`课程“${deleteTarget.label}”已删除`);
+    } else {
+      setCourses((items) => items.map((course) => course.id === deleteTarget.courseId
+        ? { ...course, items: course.items.filter((item) => item.canonicalUrl !== deleteTarget.canonicalUrl) }
+        : course));
+      setContentForm(null);
+      setNotice(`学习内容“${deleteTarget.label}”已删除`);
+    }
+    setDeleteTarget(null);
+    window.setTimeout(() => setNotice(''), 2000);
+  };
+
   const saveLessonToCourse = () => {
     const canonicalUrl = normalizeUrl(currentLessonUrl);
     if (!selectedCourseId) {
@@ -585,7 +731,7 @@ export default function App() {
       return {
         ...course,
         items: [...course.items, {
-          title: LESSON_TITLE,
+          title: currentLessonTitle,
           url: currentLessonUrl,
           canonicalUrl,
           addedAt: Date.now(),
@@ -600,6 +746,8 @@ export default function App() {
     videoRef.current?.pause();
     setWordTooltip(null);
     setCreatingCourse(false);
+    setEditingCourseId(null);
+    setContentForm(null);
     setAppView('courses');
   };
 
@@ -607,6 +755,7 @@ export default function App() {
     setSelectedCourseId(courseId);
     setUrl(item.url);
     setCurrentLessonUrl(item.url);
+    setCurrentLessonTitle(item.title);
     setCreatingCourse(false);
     setAppView('player');
     setNotice(`已打开“${item.title}”`);
@@ -615,7 +764,21 @@ export default function App() {
 
   const learnedVideos = Object.values(stats.videos).filter((item) => item.learned);
   const learnedCourses = courses.filter((course) => course.items.some((item) => stats.videos[item.canonicalUrl]?.learned));
-  const managedCourse = courses.find((course) => course.id === selectedCourseId) || courses[0];
+  const filteredCourses = useMemo(() => {
+    const term = courseSearch.trim().toLowerCase();
+    if (!term) return courses;
+    return courses.filter((course) => (
+      course.name.toLowerCase().includes(term)
+      || course.items.some((item) => `${item.title} ${item.url}`.toLowerCase().includes(term))
+    ));
+  }, [courses, courseSearch]);
+  const managedCourse = filteredCourses.find((course) => course.id === selectedCourseId) || filteredCourses[0];
+  const managedItems = useMemo(() => {
+    if (!managedCourse) return [];
+    const term = courseSearch.trim().toLowerCase();
+    if (!term || managedCourse.name.toLowerCase().includes(term)) return managedCourse.items;
+    return managedCourse.items.filter((item) => `${item.title} ${item.url}`.toLowerCase().includes(term));
+  }, [managedCourse, courseSearch]);
   const savedLessonCount = courses.reduce((total, course) => total + course.items.length, 0);
   const phaseLabel = {
     idle: '准备开始',
@@ -648,7 +811,7 @@ export default function App() {
           <button className="stats-button" onClick={() => setStatsOpen(true)} title="学习统计">
             <BarChart3 size={16} /><span>{formatStudyTime(stats.totalSeconds)}</span>
           </button>
-          <button className="manage-course-button" onClick={appView === 'player' ? openCourseManager : () => { setCreatingCourse(false); setAppView('player'); }}>
+          <button className="manage-course-button" onClick={appView === 'player' ? openCourseManager : () => { setCreatingCourse(false); setEditingCourseId(null); setContentForm(null); setAppView('player'); }}>
             {appView === 'player' ? <Library size={16} /> : <ArrowLeft size={16} />}
             {appView === 'player' ? '课程管理' : '返回播放器'}
           </button>
@@ -678,10 +841,16 @@ export default function App() {
             <div><Timer size={18} /><span><strong>{formatStudyTime(stats.totalSeconds)}</strong><small>累计学习</small></span></div>
           </section>
 
+          <div className="manager-search">
+            <Search size={16} />
+            <input value={courseSearch} onChange={(event) => setCourseSearch(event.target.value)} placeholder="搜索课程名称、内容标题或网址" aria-label="搜索课程和学习内容" />
+            {courseSearch && <button className="icon-button" onClick={() => setCourseSearch('')} aria-label="清空搜索"><X size={15} /></button>}
+          </div>
+
           <div className="course-library-layout">
             <nav className="course-navigation" aria-label="课程列表">
-              <div className="course-navigation-head"><strong>全部课程</strong><span>{courses.length}</span></div>
-              {courses.map((course) => {
+              <div className="course-navigation-head"><strong>{courseSearch ? '搜索结果' : '全部课程'}</strong><span>{filteredCourses.length}</span></div>
+              {filteredCourses.map((course) => {
                 const learnedCount = course.items.filter((item) => stats.videos[item.canonicalUrl]?.learned).length;
                 return (
                   <button className={course.id === managedCourse?.id ? 'active' : ''} key={course.id} onClick={() => setSelectedCourseId(course.id)}>
@@ -691,31 +860,56 @@ export default function App() {
                   </button>
                 );
               })}
+              {!filteredCourses.length && <div className="empty-navigation">没有匹配的课程或内容</div>}
             </nav>
 
             <section className="course-detail">
               {managedCourse ? (
                 <>
                   <div className="course-detail-head">
-                    <div><span>当前课程</span><h2>{managedCourse.name}</h2><p>创建于 {new Date(managedCourse.createdAt).toLocaleDateString('zh-CN')}</p></div>
-                    <strong>{managedCourse.items.length} 个视频</strong>
+                    {editingCourseId === managedCourse.id ? (
+                      <div className="course-rename">
+                        <span>编辑课程名称</span>
+                        <div><input autoFocus value={courseNameDraft} onChange={(event) => setCourseNameDraft(event.target.value)} onKeyDown={(event) => event.key === 'Enter' && saveCourseName()} aria-label="课程名称" /><button className="icon-button" onClick={saveCourseName} title="保存名称" aria-label="保存名称"><Save size={16} /></button><button className="icon-button" onClick={() => setEditingCourseId(null)} title="取消" aria-label="取消重命名"><X size={16} /></button></div>
+                      </div>
+                    ) : (
+                      <div><span>当前课程</span><h2>{managedCourse.name}</h2><p>创建于 {new Date(managedCourse.createdAt).toLocaleDateString('zh-CN')}</p></div>
+                    )}
+                    <div className="course-detail-actions">
+                      <button className="detail-command" onClick={() => startCreateContent(managedCourse.id)}><Plus size={15} />添加内容</button>
+                      <button className="icon-button" onClick={() => startRenameCourse(managedCourse)} title="重命名课程" aria-label="重命名课程"><Pencil size={15} /></button>
+                      <button className="icon-button danger" onClick={() => setDeleteTarget({ type: 'course', courseId: managedCourse.id, label: managedCourse.name })} title="删除课程" aria-label="删除课程"><Trash2 size={15} /></button>
+                    </div>
                   </div>
+                  {contentForm?.courseId === managedCourse.id && (
+                    <div className="content-form">
+                      <div className="content-form-heading"><span>{contentForm.mode === 'create' ? '新增学习内容' : '编辑学习内容'}</span><button className="icon-button" onClick={() => setContentForm(null)} aria-label="关闭内容表单"><X size={16} /></button></div>
+                      <label><span>标题</span><input autoFocus value={contentForm.title} onChange={(event) => setContentForm((current) => ({ ...current, title: event.target.value }))} placeholder="例如：The AI novice and the AI power user" /></label>
+                      <label><span>网址</span><input value={contentForm.url} onChange={(event) => setContentForm((current) => ({ ...current, url: event.target.value }))} onKeyDown={(event) => event.key === 'Enter' && saveContent()} placeholder="https://..." /></label>
+                      <button className="next-button" onClick={saveContent}><Save size={15} />保存内容</button>
+                    </div>
+                  )}
                   <div className="course-item-head"><span>学习内容</span><span>学习进度</span><span>操作</span></div>
                   <div className="course-item-list">
-                    {managedCourse.items.map((item, index) => {
+                    {managedItems.map((item, index) => {
                       const itemStats = stats.videos[item.canonicalUrl];
                       return (
                         <article className="course-item" key={item.canonicalUrl}>
                           <span className="course-item-index">{String(index + 1).padStart(2, '0')}</span>
-                          <div className="course-item-title"><strong>{item.title}</strong><small>{new URL(item.url).hostname} · 添加于 {new Date(item.addedAt).toLocaleDateString('zh-CN')}</small></div>
+                          <div className="course-item-title"><strong>{item.title}</strong><small>{getUrlHost(item.url)} · 添加于 {new Date(item.addedAt).toLocaleDateString('zh-CN')}</small></div>
                           <div className="course-item-progress"><span className={itemStats?.learned ? 'learned' : ''}>{itemStats?.learned ? '已学习' : '未开始'}</span><small>{formatStudyTime(itemStats?.studiedSeconds || 0)}</small></div>
-                          <button className="open-course-item" onClick={() => openCourseItem(managedCourse.id, item)}><Play size={14} fill="currentColor" />进入学习</button>
+                          <div className="course-item-actions">
+                            <button className="open-course-item" onClick={() => openCourseItem(managedCourse.id, item)}><Play size={14} fill="currentColor" />进入学习</button>
+                            <button className="icon-button" onClick={() => startEditContent(managedCourse.id, item)} title="编辑学习内容" aria-label={`编辑 ${item.title}`}><Pencil size={14} /></button>
+                            <button className="icon-button danger" onClick={() => setDeleteTarget({ type: 'item', courseId: managedCourse.id, canonicalUrl: item.canonicalUrl, label: item.title })} title="删除学习内容" aria-label={`删除 ${item.title}`}><Trash2 size={14} /></button>
+                          </div>
                         </article>
                       );
                     })}
                     {!managedCourse.items.length && (
-                      <div className="empty-course"><ListMusic size={30} /><strong>这个课程还没有视频</strong><span>回到播放器，将当前视频保存到“{managedCourse.name}”。</span><button className="next-button" onClick={() => { setCreatingCourse(false); setAppView('player'); }}><ArrowLeft size={15} />返回播放器</button></div>
+                      <div className="empty-course"><ListMusic size={30} /><strong>这个课程还没有学习内容</strong><span>可以手动添加标题和网址，也可以从播放器保存当前视频。</span><button className="next-button" onClick={() => startCreateContent(managedCourse.id)}><Plus size={15} />添加内容</button></div>
                     )}
+                    {!!managedCourse.items.length && !managedItems.length && <div className="empty-course compact"><Search size={26} /><strong>没有匹配的学习内容</strong><span>尝试搜索其他标题或网址。</span></div>}
                   </div>
                 </>
               ) : (
@@ -730,7 +924,7 @@ export default function App() {
           <div className="lesson-heading">
             <div>
               <span className="eyebrow">AI Prompting for Everyone · Lesson 1</span>
-              <h1>{LESSON_TITLE}</h1>
+              <h1>{currentLessonTitle}</h1>
             </div>
             <div className="lesson-side">
               <div className="lesson-meta"><Clock3 size={15} /> 09:39 <span>•</span> 89 句</div>
@@ -758,7 +952,7 @@ export default function App() {
                 <div className={`audio-bars ${isPlaying ? 'moving' : ''}`}><i /><i /><i /><i /><i /><i /><i /></div>
                 <EyeOff size={19} />
                 <span>仅听音频</span>
-                <strong>{LESSON_TITLE}</strong>
+                <strong>{currentLessonTitle}</strong>
               </button>
             )}
             <div className={`stage-status ${phase === 'pause' ? 'counting' : ''}`}>
@@ -928,6 +1122,23 @@ export default function App() {
                   <div><strong>{course.name}</strong><small>{course.items.length} 个视频 · {course.items.filter((item) => stats.videos[item.canonicalUrl]?.learned).length} 个已学习</small></div>
                 </div>
               ))}
+            </div>
+          </section>
+        </div>
+      )}
+
+      {deleteTarget && (
+        <div className="modal-backdrop" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && setDeleteTarget(null)}>
+          <section className="confirm-modal" role="alertdialog" aria-modal="true" aria-labelledby="delete-dialog-title">
+            <div className="confirm-icon"><Trash2 size={20} /></div>
+            <div>
+              <span>{deleteTarget.type === 'course' ? '删除课程' : '删除学习内容'}</span>
+              <h2 id="delete-dialog-title">确认删除“{deleteTarget.label}”？</h2>
+              <p>{deleteTarget.type === 'course' ? '课程及其中保存的内容会从课程库移除，学习统计会保留。' : '该内容会从当前课程移除，已有学习统计会保留。'}</p>
+            </div>
+            <div className="confirm-actions">
+              <button className="secondary-button" onClick={() => setDeleteTarget(null)}>取消</button>
+              <button className="delete-button" onClick={confirmDelete}><Trash2 size={15} />确认删除</button>
             </div>
           </section>
         </div>
