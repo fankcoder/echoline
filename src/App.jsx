@@ -7,6 +7,7 @@ import {
   BarChart3,
   BrainCircuit,
   Check,
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
   Clock3,
@@ -176,6 +177,31 @@ function isValidWebUrl(value) {
   }
 }
 
+function isDirectMediaUrl(value) {
+  if (!isValidWebUrl(value)) return false;
+  try {
+    return /\.(m3u8|mp4|webm|ogg)$/i.test(new URL(value).pathname);
+  } catch {
+    return false;
+  }
+}
+
+function resolveMediaUrl(pageUrl, mediaUrl = '') {
+  if (mediaUrl && isDirectMediaUrl(mediaUrl)) return mediaUrl;
+  if (normalizeUrl(pageUrl) === normalizeUrl(COURSE_URL)) return VIDEO_URL;
+  if (isDirectMediaUrl(pageUrl)) return pageUrl;
+  return '';
+}
+
+function isResolvableCoursePage(value) {
+  try {
+    const parsed = new URL(value);
+    return parsed.protocol === 'https:' && parsed.hostname === 'learn.deeplearning.ai';
+  } catch {
+    return false;
+  }
+}
+
 function formatStudyTime(seconds) {
   if (seconds < 60) return `${Math.floor(seconds)} 秒`;
   const totalMinutes = Math.floor(seconds / 60);
@@ -226,6 +252,8 @@ function WordText({ text, onInspect, onHover, onLeave, savedWords }) {
 export default function App() {
   const videoRef = useRef(null);
   const transcriptRef = useRef(null);
+  const coursePickerRef = useRef(null);
+  const mediaRequestRef = useRef(0);
   const phaseRef = useRef('idle');
   const activeRef = useRef(0);
   const studyModeRef = useRef(true);
@@ -250,6 +278,9 @@ export default function App() {
   const [url, setUrl] = useState(COURSE_URL);
   const [currentLessonUrl, setCurrentLessonUrl] = useState(COURSE_URL);
   const [currentLessonTitle, setCurrentLessonTitle] = useState(LESSON_TITLE);
+  const [currentMediaUrl, setCurrentMediaUrl] = useState(VIDEO_URL);
+  const [mediaError, setMediaError] = useState('');
+  const [mediaResolving, setMediaResolving] = useState(false);
   const [importState, setImportState] = useState('ready');
   const [notice, setNotice] = useState('');
   const [panel, setPanel] = useState('transcript');
@@ -272,6 +303,7 @@ export default function App() {
   const [courseNameDraft, setCourseNameDraft] = useState('');
   const [contentForm, setContentForm] = useState(null);
   const [deleteTarget, setDeleteTarget] = useState(null);
+  const [coursePickerOpen, setCoursePickerOpen] = useState(false);
 
   const setLearningPhase = useCallback((value) => {
     phaseRef.current = value;
@@ -298,15 +330,45 @@ export default function App() {
     const video = videoRef.current;
     if (!video) return undefined;
     let hls;
-    if (video.canPlayType('application/vnd.apple.mpegurl')) {
-      video.src = VIDEO_URL;
-    } else if (Hls.isSupported()) {
+    const onMediaError = () => setMediaError('媒体加载失败，请检查媒体地址是否仍然有效或允许跨域播放。');
+    video.pause();
+    video.removeAttribute('src');
+    video.load();
+    setIsPlaying(false);
+    setCurrentTime(0);
+    setMediaError('');
+    video.addEventListener('error', onMediaError);
+
+    if (!currentMediaUrl && !mediaResolving) {
+      setMediaError('这个学习内容只有课程网页地址，还需要一个可直接播放的媒体地址。');
+    } else if (mediaResolving) {
+      setMediaError('');
+    } else if (/\.m3u8(?:$|\?)/i.test(currentMediaUrl) && video.canPlayType('application/vnd.apple.mpegurl')) {
+      video.src = currentMediaUrl;
+    } else if (/\.m3u8(?:$|\?)/i.test(currentMediaUrl) && Hls.isSupported()) {
       hls = new Hls({ enableWorker: true });
-      hls.loadSource(VIDEO_URL);
+      hls.loadSource(currentMediaUrl);
       hls.attachMedia(video);
+      hls.on(Hls.Events.ERROR, (_event, data) => {
+        if (data.fatal) setMediaError('媒体流加载失败，请检查媒体地址或网络权限。');
+      });
+    } else {
+      video.src = currentMediaUrl;
     }
-    return () => hls?.destroy();
-  }, []);
+    return () => {
+      video.removeEventListener('error', onMediaError);
+      hls?.destroy();
+    };
+  }, [currentMediaUrl, mediaResolving]);
+
+  useEffect(() => {
+    if (!coursePickerOpen) return undefined;
+    const closePicker = (event) => {
+      if (!coursePickerRef.current?.contains(event.target)) setCoursePickerOpen(false);
+    };
+    window.addEventListener('pointerdown', closePicker);
+    return () => window.removeEventListener('pointerdown', closePicker);
+  }, [coursePickerOpen]);
 
   useEffect(() => {
     localStorage.setItem('echoline-vocabulary', JSON.stringify(savedWords));
@@ -420,14 +482,14 @@ export default function App() {
   const playCue = useCallback((index, nextPhase = 'listening') => {
     const video = videoRef.current;
     const cue = cues[index];
-    if (!video || !cue) return;
+    if (!video || !cue || !currentMediaUrl) return;
     handledEndRef.current = false;
     activeRef.current = index;
     setActiveIndex(index);
     setLearningPhase(nextPhase);
     video.currentTime = cue.start + 0.02;
     video.play().catch(() => {});
-  }, [cues, setLearningPhase]);
+  }, [cues, currentMediaUrl, setLearningPhase]);
 
   useEffect(() => {
     const video = videoRef.current;
@@ -533,6 +595,7 @@ export default function App() {
         setImportState('done');
         setCurrentLessonUrl(url);
         setCurrentLessonTitle(LESSON_TITLE);
+        setCurrentMediaUrl(VIDEO_URL);
         setNotice('课程、音轨与 89 句双语字幕已载入');
         playCue(0, 'listening');
       } else {
@@ -545,7 +608,11 @@ export default function App() {
 
   const togglePlay = () => {
     const video = videoRef.current;
-    if (!video) return;
+    if (!video || !currentMediaUrl || mediaError) {
+      setNotice('当前学习内容还没有可播放的媒体地址');
+      window.setTimeout(() => setNotice(''), 2200);
+      return;
+    }
     if (video.paused) {
       if (studyMode && (phase === 'idle' || phase === 'ready')) playCue(activeIndex, 'listening');
       else video.play().catch(() => {});
@@ -627,7 +694,7 @@ export default function App() {
 
   const startCreateContent = (courseId) => {
     setEditingCourseId(null);
-    setContentForm({ mode: 'create', courseId, originalCanonicalUrl: '', title: '', url: '' });
+    setContentForm({ mode: 'create', courseId, originalCanonicalUrl: '', title: '', url: '', mediaUrl: '' });
   };
 
   const startEditContent = (courseId, item) => {
@@ -638,6 +705,7 @@ export default function App() {
       originalCanonicalUrl: item.canonicalUrl,
       title: item.title,
       url: item.url,
+      mediaUrl: item.mediaUrl || '',
     });
   };
 
@@ -645,6 +713,7 @@ export default function App() {
     if (!contentForm) return;
     const title = contentForm.title.trim();
     const nextUrl = contentForm.url.trim();
+    const mediaUrl = contentForm.mediaUrl.trim();
     if (!title || !nextUrl) {
       setNotice('请填写学习内容标题和网址');
       window.setTimeout(() => setNotice(''), 2200);
@@ -653,6 +722,11 @@ export default function App() {
     if (!isValidWebUrl(nextUrl)) {
       setNotice('请输入以 http:// 或 https:// 开头的有效网址');
       window.setTimeout(() => setNotice(''), 2400);
+      return;
+    }
+    if (mediaUrl && !isDirectMediaUrl(mediaUrl)) {
+      setNotice('媒体地址需要是可直接播放的 m3u8、mp4、webm 或 ogg 链接');
+      window.setTimeout(() => setNotice(''), 2600);
       return;
     }
 
@@ -674,13 +748,13 @@ export default function App() {
       if (contentForm.mode === 'create') {
         return {
           ...item,
-          items: [...item.items, { title, url: nextUrl, canonicalUrl, addedAt: Date.now() }],
+          items: [...item.items, { title, url: nextUrl, mediaUrl, canonicalUrl, addedAt: Date.now() }],
         };
       }
       return {
         ...item,
         items: item.items.map((lesson) => lesson.canonicalUrl === oldCanonicalUrl
-          ? { ...lesson, title, url: nextUrl, canonicalUrl }
+          ? { ...lesson, title, url: nextUrl, mediaUrl, canonicalUrl }
           : lesson),
       };
     }));
@@ -745,6 +819,7 @@ export default function App() {
         items: [...course.items, {
           title: currentLessonTitle,
           url: currentLessonUrl,
+          mediaUrl: currentMediaUrl,
           canonicalUrl,
           addedAt: Date.now(),
         }],
@@ -764,14 +839,69 @@ export default function App() {
   };
 
   const openCourseItem = (courseId, item) => {
+    const playableUrl = resolveMediaUrl(item.url, item.mediaUrl);
+    const requestId = mediaRequestRef.current + 1;
+    mediaRequestRef.current = requestId;
+    videoRef.current?.pause();
     setSelectedCourseId(courseId);
     setUrl(item.url);
     setCurrentLessonUrl(item.url);
     setCurrentLessonTitle(item.title);
+    setCurrentMediaUrl(playableUrl);
+    setMediaError('');
+    setMediaResolving(!playableUrl && isResolvableCoursePage(item.url));
+    setActiveIndex(0);
+    setCurrentTime(0);
+    setLearningPhase('idle');
+    setCoursePickerOpen(false);
     setCreatingCourse(false);
     setAppView('player');
-    setNotice(`已打开“${item.title}”`);
-    window.setTimeout(() => setNotice(''), 1800);
+    setNotice(playableUrl ? `已打开“${item.title}”` : (isResolvableCoursePage(item.url) ? `正在解析“${item.title}”的媒体地址` : `“${item.title}”还需要补充媒体地址`));
+    window.setTimeout(() => setNotice(''), 2400);
+
+    if (!playableUrl && isResolvableCoursePage(item.url)) {
+      fetch(`/api/resolve-media?url=${encodeURIComponent(item.url)}`)
+        .then(async (response) => {
+          const result = await response.json();
+          if (!response.ok || !result.mediaUrl) throw new Error(result.error || '媒体地址解析失败');
+          if (mediaRequestRef.current !== requestId) return;
+          setCurrentMediaUrl(result.mediaUrl);
+          setCourses((current) => current.map((course) => course.id === courseId
+            ? { ...course, items: course.items.map((lesson) => lesson.canonicalUrl === item.canonicalUrl ? { ...lesson, mediaUrl: result.mediaUrl } : lesson) }
+            : course));
+          setNotice(`“${item.title}”已解析，可以播放`);
+          window.setTimeout(() => setNotice(''), 2200);
+        })
+        .catch((error) => {
+          if (mediaRequestRef.current !== requestId) return;
+          setMediaError(error.message || '媒体地址解析失败');
+        })
+        .finally(() => {
+          if (mediaRequestRef.current === requestId) setMediaResolving(false);
+        });
+    }
+  };
+
+  const selectedCourse = courses.find((course) => course.id === selectedCourseId) || courses[0];
+  const currentLessonIndex = selectedCourse?.items.findIndex((item) => item.canonicalUrl === normalizeUrl(currentLessonUrl)) ?? -1;
+  const hasPreviousEpisode = currentLessonIndex > 0;
+  const hasNextEpisode = currentLessonIndex >= 0 && currentLessonIndex < (selectedCourse?.items.length || 0) - 1;
+
+  const chooseCourse = (course) => {
+    setSelectedCourseId(course.id);
+    setCoursePickerOpen(false);
+    if (course.items.length) {
+      openCourseItem(course.id, course.items[0]);
+    } else {
+      setNotice(`课程“${course.name}”还没有学习内容`);
+      window.setTimeout(() => setNotice(''), 2200);
+    }
+  };
+
+  const goToEpisode = (offset) => {
+    if (!selectedCourse || currentLessonIndex < 0) return;
+    const target = selectedCourse.items[currentLessonIndex + offset];
+    if (target) openCourseItem(selectedCourse.id, target);
   };
 
   const learnedVideos = Object.values(stats.videos).filter((item) => item.learned);
@@ -799,6 +929,7 @@ export default function App() {
     repeat: '核对原句',
     ready: '等待下一句',
   }[phase];
+  const playbackUnavailable = mediaResolving || !currentMediaUrl || Boolean(mediaError);
 
   return (
     <div className={`app-shell ${darkMode ? 'dark-mode' : ''}`}>
@@ -900,7 +1031,8 @@ export default function App() {
                     <div className="content-form">
                       <div className="content-form-heading"><span>{contentForm.mode === 'create' ? '新增学习内容' : '编辑学习内容'}</span><button className="icon-button" onClick={() => setContentForm(null)} aria-label="关闭内容表单"><X size={16} /></button></div>
                       <label><span>标题</span><input autoFocus value={contentForm.title} onChange={(event) => setContentForm((current) => ({ ...current, title: event.target.value }))} placeholder="例如：The AI novice and the AI power user" /></label>
-                      <label><span>网址</span><input value={contentForm.url} onChange={(event) => setContentForm((current) => ({ ...current, url: event.target.value }))} onKeyDown={(event) => event.key === 'Enter' && saveContent()} placeholder="https://..." /></label>
+                      <label><span>课程网页地址</span><input value={contentForm.url} onChange={(event) => setContentForm((current) => ({ ...current, url: event.target.value }))} placeholder="https://..." /></label>
+                      <label><span>媒体地址（可选）</span><input value={contentForm.mediaUrl} onChange={(event) => setContentForm((current) => ({ ...current, mediaUrl: event.target.value }))} onKeyDown={(event) => event.key === 'Enter' && saveContent()} placeholder="https://.../video.m3u8 或 video.mp4" /></label>
                       <button className="next-button" onClick={saveContent}><Save size={15} />保存内容</button>
                     </div>
                   )}
@@ -911,7 +1043,7 @@ export default function App() {
                       return (
                         <article className="course-item" key={item.canonicalUrl}>
                           <span className="course-item-index">{String(index + 1).padStart(2, '0')}</span>
-                          <div className="course-item-title"><strong>{item.title}</strong><small>{getUrlHost(item.url)} · 添加于 {new Date(item.addedAt).toLocaleDateString('zh-CN')}</small></div>
+                          <div className="course-item-title"><strong>{item.title}</strong><small>{getUrlHost(item.url)} · {resolveMediaUrl(item.url, item.mediaUrl) ? '可播放' : '缺少媒体地址'} · 添加于 {new Date(item.addedAt).toLocaleDateString('zh-CN')}</small></div>
                           <div className="course-item-progress"><span className={itemStats?.learned ? 'learned' : ''}>{itemStats?.learned ? '已学习' : '未开始'}</span><small>{formatStudyTime(itemStats?.studiedSeconds || 0)}</small></div>
                           <div className="course-item-actions">
                             <button className="open-course-item" onClick={() => openCourseItem(managedCourse.id, item)}><Play size={14} fill="currentColor" />进入学习</button>
@@ -944,11 +1076,30 @@ export default function App() {
             <div className="lesson-side">
               <div className="lesson-meta"><Clock3 size={15} /> 09:39 <span>•</span> 89 句</div>
               <div className="course-actions">
-                <select aria-label="选择课程" value={selectedCourseId} onChange={(event) => setSelectedCourseId(event.target.value)}>
-                  {courses.map((course) => <option key={course.id} value={course.id}>{course.name} ({course.items.length})</option>)}
-                </select>
+                <div className="course-picker" ref={coursePickerRef}>
+                  <button className="course-picker-trigger" onClick={() => setCoursePickerOpen((value) => !value)} aria-haspopup="listbox" aria-expanded={coursePickerOpen} aria-label={`选择课程，当前${selectedCourse?.name || '未选择'}`}>
+                    <span>{selectedCourse?.name || '选择课程'} ({selectedCourse?.items.length || 0})</span><ChevronDown size={14} />
+                  </button>
+                  {coursePickerOpen && (
+                    <div className="course-picker-menu" role="listbox" aria-label="选择课程">
+                      <div className="course-picker-head">选择课程</div>
+                      {courses.map((course) => (
+                        <button key={course.id} role="option" aria-selected={course.id === selectedCourseId} onClick={() => chooseCourse(course)}>
+                          <span><strong>{course.name}</strong><small>{course.items.length} 集</small></span>
+                          {course.id === selectedCourseId && <Check size={15} />}
+                        </button>
+                      ))}
+                      {!courses.length && <div className="course-picker-empty">还没有课程</div>}
+                    </div>
+                  )}
+                </div>
                 <button className="icon-button compact" onClick={() => setCreatingCourse((value) => !value)} title="新建课程" aria-label="新建课程"><FolderPlus size={16} /></button>
                 <button className="save-course-button" onClick={saveLessonToCourse}><Bookmark size={14} />保存到课程</button>
+              </div>
+              <div className="episode-navigation" aria-label="课程集数导航">
+                <button onClick={() => goToEpisode(-1)} disabled={!hasPreviousEpisode}><ChevronLeft size={15} />上一集</button>
+                <span>{currentLessonIndex >= 0 ? `第 ${currentLessonIndex + 1} / ${selectedCourse.items.length} 集` : '当前内容未在所选课程中'}</span>
+                <button onClick={() => goToEpisode(1)} disabled={!hasNextEpisode}>下一集<ChevronRight size={15} /></button>
               </div>
               {creatingCourse && (
                 <div className="course-create">
@@ -960,9 +1111,9 @@ export default function App() {
             </div>
           </div>
 
-          <div className={`video-stage ${videoHidden ? 'video-hidden' : ''}`}>
+          <div className={`video-stage ${videoHidden ? 'video-hidden' : ''} ${playbackUnavailable ? 'media-missing' : ''}`}>
             <video ref={videoRef} crossOrigin="anonymous" playsInline onClick={togglePlay} />
-            {videoHidden && (
+            {videoHidden && !playbackUnavailable && (
               <button className="audio-only" onClick={togglePlay} aria-label={isPlaying ? '暂停音频' : '播放音频'}>
                 <div className={`audio-bars ${isPlaying ? 'moving' : ''}`}><i /><i /><i /><i /><i /><i /><i /></div>
                 <EyeOff size={19} />
@@ -970,25 +1121,33 @@ export default function App() {
                 <strong>{currentLessonTitle}</strong>
               </button>
             )}
-            <div className={`stage-status ${phase === 'pause' ? 'counting' : ''}`}>
+            {playbackUnavailable && (
+              <div className="media-unavailable">
+                {mediaResolving ? <span className="media-loader" /> : <ListMusic size={28} />}
+                <strong>{mediaResolving ? '正在解析课程媒体' : '还不能播放这个学习内容'}</strong>
+                <span>{mediaResolving ? '正在从课程网页获取可播放的媒体地址，请稍候。' : (mediaError || '请在课程管理中为它补充可直接播放的媒体地址。')}</span>
+                {!mediaResolving && <button onClick={openCourseManager}><Pencil size={14} />前往课程管理</button>}
+              </div>
+            )}
+            {!playbackUnavailable && <div className={`stage-status ${phase === 'pause' ? 'counting' : ''}`}>
               {phase === 'pause' ? <span className="countdown-number">{countdown}</span> : <BrainCircuit size={16} />}
               <span>{phaseLabel}</span>
-            </div>
-            {!isPlaying && phase === 'idle' && (
+            </div>}
+            {!playbackUnavailable && !isPlaying && phase === 'idle' && (
               <button className="big-play" onClick={() => playCue(activeIndex, 'listening')} aria-label="播放"><Play fill="currentColor" size={26} /></button>
             )}
           </div>
 
           <div className="transport">
-            <button className="icon-button" onClick={() => goToCue(Math.max(0, activeIndex - 1))} title="上一句" aria-label="上一句"><ChevronLeft size={22} /></button>
-            <button className="play-button" onClick={togglePlay} title={isPlaying ? '暂停' : '播放'} aria-label={isPlaying ? '暂停' : '播放'}>{isPlaying ? <Pause fill="currentColor" size={19} /> : <Play fill="currentColor" size={19} />}</button>
-            <button className="icon-button" onClick={() => goToCue(Math.min(cues.length - 1, activeIndex + 1))} title="下一句" aria-label="下一句"><ChevronRight size={22} /></button>
+            <button className="icon-button" onClick={() => goToCue(Math.max(0, activeIndex - 1))} title="上一句" aria-label="上一句" disabled={playbackUnavailable}><ChevronLeft size={22} /></button>
+            <button className="play-button" onClick={togglePlay} title={isPlaying ? '暂停' : '播放'} aria-label={isPlaying ? '暂停' : '播放'} disabled={playbackUnavailable}>{isPlaying ? <Pause fill="currentColor" size={19} /> : <Play fill="currentColor" size={19} />}</button>
+            <button className="icon-button" onClick={() => goToCue(Math.min(cues.length - 1, activeIndex + 1))} title="下一句" aria-label="下一句" disabled={playbackUnavailable}><ChevronRight size={22} /></button>
             <span className="timecode">{formatTime(currentTime)} <i>/</i> {formatTime(duration)}</span>
             <input className="timeline" aria-label="播放进度" type="range" min="0" max={duration || 579} step="0.1" value={Math.min(currentTime, duration || 579)} onChange={(event) => { videoRef.current.currentTime = Number(event.target.value); }} />
             <Volume2 size={17} className="volume-icon" />
             <input className="volume" aria-label="音量" type="range" min="0" max="1" step="0.05" value={volume} onChange={(event) => { const next = Number(event.target.value); setVolume(next); videoRef.current.volume = next; }} />
             <button className="speed-button" onClick={() => { const options = [0.75, 1, 1.25, 1.5]; const next = options[(options.indexOf(speed) + 1) % options.length]; setSpeed(next); videoRef.current.playbackRate = next; }} title="播放速度">{speed}×</button>
-            <button className="icon-button" onClick={() => setVideoHidden((value) => !value)} title={videoHidden ? '显示视频' : '隐藏视频，仅听音频'} aria-label={videoHidden ? '显示视频' : '隐藏视频，仅听音频'} aria-pressed={videoHidden}>{videoHidden ? <Eye size={17} /> : <EyeOff size={17} />}</button>
+            <button className="icon-button" onClick={() => setVideoHidden((value) => !value)} title={videoHidden ? '显示视频' : '隐藏视频，仅听音频'} aria-label={videoHidden ? '显示视频' : '隐藏视频，仅听音频'} aria-pressed={videoHidden} disabled={playbackUnavailable}>{videoHidden ? <Eye size={17} /> : <EyeOff size={17} />}</button>
             <button className="icon-button" onClick={() => videoRef.current.requestFullscreen?.()} title="全屏" aria-label="全屏"><Maximize size={17} /></button>
           </div>
 
