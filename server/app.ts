@@ -11,7 +11,7 @@ import { addLessonSchema, createCourseSchema, progressSchema, reorderSchema, res
 type PlaybackAsset = { mediaUrl: string; resolvedAt: number; resolverVersion: string };
 const playbackAssets = new Map<string, PlaybackAsset>();
 const requests = new Map<string, { count: number; resetAt: number }>();
-const ALLOWED_ORIGINS = new Set(['http://127.0.0.1:5173', 'http://localhost:5173', 'http://127.0.0.1:4173', 'http://localhost:4173']);
+const ALLOWED_ORIGINS = new Set(['http://127.0.0.1:5173', 'http://localhost:5173', 'http://127.0.0.1:4173', 'http://localhost:4173', 'http://127.0.0.1:5174']);
 
 function errorMessage(error: unknown) {
   if (error instanceof ZodError) return error.issues.map((issue) => issue.message).join('；');

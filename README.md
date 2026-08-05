@@ -54,9 +54,10 @@ npm start
 
 ```bash
 npm run check
+npm run test:e2e
 ```
 
-该命令依次执行类型检查、lint、单元/API 测试和生产构建。CI 使用相同检查。
+`npm run check` 依次执行类型检查、lint、单元/API 测试和生产构建；`npm run test:e2e` 使用真实 Chromium 验证快速切集时旧字幕请求无法覆盖新课时。CI 执行全部检查。
 
 ## 使用边界
 

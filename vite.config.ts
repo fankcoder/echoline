@@ -5,7 +5,7 @@ export default defineConfig({
   plugins: [react()],
   server: {
     host: '127.0.0.1',
-    proxy: { '/api': 'http://127.0.0.1:4173' },
+    proxy: { '/api': `http://127.0.0.1:${process.env.VITE_API_PORT || 4173}` },
   },
   build: {
     chunkSizeWarningLimit: 500,
