@@ -3,14 +3,14 @@ import { expect, test } from '@playwright/test';
 const firstId = '11111111-1111-4111-8111-111111111111';
 const secondId = '22222222-2222-4222-8222-222222222222';
 
-const lesson = (id: string, title: string, cueCount: number) => ({
+const lesson = (id: string, title: string, cueCount: number, translationStatus: 'idle' | 'running' | 'ready' | 'failed' = 'ready') => ({
   id, sourceUrl: `https://learn.deeplearning.ai/courses/test/lesson/${id}/test`, canonicalUrl: `https://learn.deeplearning.ai/courses/test/lesson/${id}/test`,
   sourceVideoId: id, title, duration: 60, manifestRevision: 1, importStatus: 'ready', captionStatus: 'ready',
-  translationStatus: 'ready', translationProgress: 1, cueCount,
+  translationStatus, translationProgress: translationStatus === 'ready' ? 1 : .4, cueCount,
 });
 
-const manifest = (id: string, title: string, text: string, zh: string, cueCount: number) => ({
-  lesson: lesson(id, title, cueCount),
+const manifest = (id: string, title: string, text: string, zh: string, cueCount: number, translationStatus: 'idle' | 'running' | 'ready' | 'failed' = 'ready') => ({
+  lesson: lesson(id, title, cueCount, translationStatus),
   cues: Array.from({ length: cueCount }, (_, index) => ({ id: `cue-${index + 1}`, start: index, end: index + .8, en: index ? `${text} ${index + 1}` : text, zh: index ? `${zh} ${index + 1}` : zh })),
   captionSource: 'llm', progress: { playbackSeconds: 0, sessionSeconds: 0, positionSeconds: 0, activeCue: 0, completedCueIds: [] },
   playback: null,
@@ -39,4 +39,38 @@ test('late subtitle response cannot overwrite the newly selected lesson', async 
   await expect(page.getByText('CURRENT ENGLISH', { exact: true })).toHaveCount(2);
   await expect(page.getByText('OLD ENGLISH MUST DISAPPEAR')).toHaveCount(0);
   await expect(page.getByText('旧字幕不得出现')).toHaveCount(0);
+
+  const reader = await page.locator('.learning-panel').boundingBox();
+  const player = await page.locator('.player-column').boundingBox();
+  const video = await page.locator('.video-stage').boundingBox();
+  expect(reader!.width).toBeGreaterThan(player!.width);
+  expect(video!.width).toBeLessThanOrEqual(390);
+  expect(video!.height).toBeLessThanOrEqual(230);
+});
+
+test('an in-flight translation poll from the old lesson is cancelled on next episode', async ({ page }) => {
+  const course = { id: 'course', name: 'Regression course', createdAt: Date.now(), updatedAt: Date.now(), lessons: [lesson(firstId, 'Polling old lesson', 2, 'running'), lesson(secondId, 'Current lesson', 3)] };
+  let oldLessonRequests = 0;
+  await page.route('**/api/bootstrap', (route) => route.fulfill({ json: { courses: [course], vocabulary: [], settings: { selectedCourseId: 'course', localStorageMigrated: true }, stats: { playbackSeconds: 0, sessionSeconds: 0, learnedLessons: 0 }, migrationVersion: 1 } }));
+  await page.route('**/api/settings', (route) => route.fulfill({ json: {} }));
+  await page.route('**/api/lessons/*/progress', (route) => route.fulfill({ json: {} }));
+  await page.route(`**/api/lessons/${firstId}/refresh`, (route) => route.fulfill({ json: manifest(firstId, 'Polling old lesson', 'OLD POLLING SUBTITLE', '旧轮询字幕', 2, 'running') }));
+  await page.route(`**/api/lessons/${secondId}/refresh`, (route) => route.fulfill({ json: manifest(secondId, 'Current lesson', 'CURRENT ENGLISH', '当前中文字幕', 3) }));
+  await page.route(`**/api/lessons/${firstId}`, async (route) => {
+    oldLessonRequests += 1;
+    if (oldLessonRequests > 1) await new Promise((resolve) => setTimeout(resolve, 700));
+    await route.fulfill({ json: manifest(firstId, 'Polling old lesson', 'OLD POLLING SUBTITLE', '旧轮询字幕', 2, 'running') });
+  });
+  await page.route(`**/api/lessons/${secondId}`, (route) => route.fulfill({ json: manifest(secondId, 'Current lesson', 'CURRENT ENGLISH', '当前中文字幕', 3) }));
+
+  await page.goto(`/learn/${firstId}`);
+  await expect(page.getByRole('heading', { name: 'Polling old lesson' })).toBeVisible();
+  await expect.poll(() => oldLessonRequests, { timeout: 5_000 }).toBeGreaterThan(1);
+  await page.getByRole('button', { name: '下一集' }).click();
+
+  await expect(page.getByRole('heading', { name: 'Current lesson' })).toBeVisible();
+  await page.waitForTimeout(900);
+  await expect(page.getByText('CURRENT ENGLISH', { exact: true })).toHaveCount(2);
+  await expect(page.getByText('OLD POLLING SUBTITLE')).toHaveCount(0);
+  await expect(page.getByText('旧轮询字幕')).toHaveCount(0);
 });
