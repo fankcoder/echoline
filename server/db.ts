@@ -87,7 +87,7 @@ export class EchoDatabase {
       this.db.prepare('INSERT INTO courses(id,name,created_at,updated_at) VALUES(?,?,?,?)')
         .run('ai-prompting', 'AI Prompting for Everyone', now, now);
     }
-    const defaults: Record<string, unknown> = { darkMode: false, videoHidden: false, waitSeconds: 3, selectedCourseId: 'ai-prompting' };
+    const defaults: Record<string, unknown> = { darkMode: false, videoHidden: false, waitSeconds: 3, repeatCount: 1, selectedCourseId: 'ai-prompting' };
     const statement = this.db.prepare('INSERT OR IGNORE INTO settings(key,value,updated_at) VALUES(?,?,?)');
     for (const [key, value] of Object.entries(defaults)) statement.run(key, JSON.stringify(value), Date.now());
   }

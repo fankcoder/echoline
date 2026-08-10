@@ -106,7 +106,7 @@ button { cursor: pointer; }
 .study-bar { margin-top: 12px; min-height: 62px; display: flex; align-items: center; gap: 16px; padding: 10px 12px; background: #fff; border: 1px solid var(--line); border-radius: 6px; }
 .mode-toggle { display: flex; align-items: center; gap: 9px; min-width: 190px; cursor: pointer; }.mode-toggle input { position: absolute; opacity: 0; }.mode-toggle strong,.mode-toggle small { display: block; }.mode-toggle strong { font-size: 12px; }.mode-toggle small { color: #7e8884; margin-top: 2px; font-size: 9px; }
 .toggle-track { width: 34px; height: 20px; padding: 3px; border-radius: 12px; background: #bac3bf; transition: .2s; }.toggle-track span { display: block; width: 14px; height: 14px; border-radius: 50%; background: #fff; transition: .2s; box-shadow: 0 1px 2px #0002; }.mode-toggle input:checked + .toggle-track { background: var(--green); }.mode-toggle input:checked + .toggle-track span { transform: translateX(14px); }
-.wait-setting { display: flex; align-items: center; gap: 7px; padding-left: 14px; border-left: 1px solid var(--line); white-space: nowrap; font-size: 10px; color: var(--muted); }.wait-setting button { width: 24px; height: 24px; border: 1px solid var(--line); background: #f6f8f7; border-radius: 4px; }.wait-setting b { color: var(--ink); font-size: 11px; min-width: 28px; text-align: center; }
+.wait-setting { display: flex; align-items: center; gap: 7px; padding-left: 14px; border-left: 1px solid var(--line); white-space: nowrap; font-size: 10px; color: var(--muted); }.wait-setting button { width: 24px; height: 24px; border: 1px solid var(--line); background: #f6f8f7; border-radius: 4px; }.wait-setting strong { color: var(--ink); font-size: 11px; min-width: 28px; text-align: center; }
 .study-actions { margin-left: auto; display: flex; gap: 7px; }
 .secondary-button,.next-button { height: 34px; border-radius: 5px; padding: 0 12px; display: flex; align-items: center; justify-content: center; gap: 6px; font-size: 11px; font-weight: 600; white-space: nowrap; }
 .secondary-button { background: #fff; border: 1px solid var(--line); color: #43504b; }.next-button { background: var(--green); border: 1px solid var(--green); color: #fff; }
@@ -360,7 +360,7 @@ button { cursor: pointer; }
 .study-bar {
   min-height: 0;
   display: grid;
-  grid-template-columns: 1fr auto;
+  grid-template-columns: minmax(0, 1fr) auto auto;
   gap: 9px;
   margin-top: 10px;
   padding: 10px;
@@ -368,6 +368,8 @@ button { cursor: pointer; }
 .mode-toggle { min-width: 0; }
 .wait-setting { padding-left: 8px; gap: 5px; }
 .wait-setting > span { display: none; }
+.wait-setting button:disabled { opacity: .35; cursor: default; }
+.repeat-setting strong { min-width: 31px; }
 .study-actions { grid-column: 1 / -1; display: grid; grid-template-columns: 1fr 1fr; margin: 0; }
 .study-actions button { height: 31px; }
 .current-sentence { margin-top: 10px; }

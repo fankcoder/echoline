@@ -37,4 +37,12 @@ describe('EchoDatabase', () => {
     expect(canonicalizeUrl('https://example.com/a/?x=1#top')).toBe('https://example.com/a');
     expect(randomUUID()).toMatch(/^[0-9a-f-]{36}$/);
   });
+
+  it('persists the study mode repeat count', () => {
+    const db = new EchoDatabase(':memory:');
+    expect(db.getSettings().repeatCount).toBe(1);
+    db.saveSettings({ repeatCount: 9 });
+    expect(db.getSettings().repeatCount).toBe(9);
+    db.close();
+  });
 });

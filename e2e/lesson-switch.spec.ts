@@ -18,8 +18,9 @@ const manifest = (id: string, title: string, text: string, zh: string, cueCount:
 
 test('late subtitle response cannot overwrite the newly selected lesson', async ({ page }) => {
   const course = { id: 'course', name: 'Regression course', createdAt: Date.now(), updatedAt: Date.now(), lessons: [lesson(firstId, 'Slow old lesson', 2), lesson(secondId, 'Current lesson', 3)] };
-  await page.route('**/api/bootstrap', (route) => route.fulfill({ json: { courses: [course], vocabulary: [], settings: { selectedCourseId: 'course', localStorageMigrated: true }, stats: { playbackSeconds: 0, sessionSeconds: 0, learnedLessons: 0 }, migrationVersion: 1 } }));
-  await page.route('**/api/settings', (route) => route.fulfill({ json: {} }));
+  const repeatSettings: number[] = [];
+  await page.route('**/api/bootstrap', (route) => route.fulfill({ json: { courses: [course], vocabulary: [], settings: { selectedCourseId: 'course', repeatCount: 1, localStorageMigrated: true }, stats: { playbackSeconds: 0, sessionSeconds: 0, learnedLessons: 0 }, migrationVersion: 1 } }));
+  await page.route('**/api/settings', async (route) => { const body = route.request().postDataJSON() as { repeatCount?: number }; if (body.repeatCount !== undefined) repeatSettings.push(body.repeatCount); await route.fulfill({ json: body }); });
   await page.route('**/api/lessons/*/progress', (route) => route.fulfill({ json: {} }));
   await page.route(`**/api/lessons/${firstId}/refresh`, (route) => route.fulfill({ json: manifest(firstId, 'Slow old lesson', 'OLD ENGLISH MUST DISAPPEAR', '旧字幕不得出现', 2) }));
   await page.route(`**/api/lessons/${secondId}/refresh`, (route) => route.fulfill({ json: manifest(secondId, 'Current lesson', 'CURRENT ENGLISH', '当前中文字幕', 3) }));
@@ -46,6 +47,16 @@ test('late subtitle response cannot overwrite the newly selected lesson', async 
   expect(reader!.width).toBeGreaterThan(player!.width);
   expect(video!.width).toBeLessThanOrEqual(390);
   expect(video!.height).toBeLessThanOrEqual(230);
+
+  const decreaseRepeats = page.getByRole('button', { name: '减少重复次数' });
+  const increaseRepeats = page.getByRole('button', { name: '增加重复次数' });
+  await decreaseRepeats.click();
+  await expect(page.locator('.repeat-setting strong')).toHaveText('0次');
+  await expect(decreaseRepeats).toBeDisabled();
+  for (let count = 0; count < 9; count += 1) await increaseRepeats.click();
+  await expect(page.locator('.repeat-setting strong')).toHaveText('9次');
+  await expect(increaseRepeats).toBeDisabled();
+  expect(repeatSettings).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
 });
 
 test('translation is requested only after clicking a specific cue', async ({ page }) => {

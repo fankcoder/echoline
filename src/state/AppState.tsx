@@ -14,7 +14,7 @@ function legacyPayload() {
   const read = (key: string, fallback: unknown) => { try { const value = localStorage.getItem(key); return value ? JSON.parse(value) : fallback; } catch { return fallback; } };
   return {
     courses: read('echoline-courses', []), vocabulary: read('echoline-vocabulary', []), stats: read('echoline-study-stats', {}),
-    settings: { darkMode: read('echoline-dark-mode', false), videoHidden: read('echoline-video-hidden', false), selectedCourseId: read('echoline-selected-course', 'ai-prompting') },
+    settings: { darkMode: read('echoline-dark-mode', false), videoHidden: read('echoline-video-hidden', false), repeatCount: 1, selectedCourseId: read('echoline-selected-course', 'ai-prompting') },
   };
 }
 

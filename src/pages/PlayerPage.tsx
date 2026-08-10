@@ -5,6 +5,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { api, jsonBody } from '../api';
 import { TranscriptPanel } from '../components/TranscriptPanel';
 import { useAppState } from '../state/AppState';
+import { normalizeRepeatCount, phaseAfterCue } from '../studyMode';
 import type { DictionaryEntry, LessonManifest } from '../types';
 
 type Phase = 'idle' | 'listening' | 'pause' | 'repeat' | 'ready';
@@ -15,11 +16,11 @@ export default function PlayerPage() {
   const { data, refresh, updateSettings, notify } = useAppState();
   const videoRef = useRef<HTMLVideoElement>(null); const requestVersion = useRef(0); const hlsRef = useRef<Hls | null>(null);
   const lessonAbortRef = useRef<AbortController | null>(null); const activeLessonRef = useRef(lessonId);
-  const phaseRef = useRef<Phase>('idle'); const activeRef = useRef(0); const handledEnd = useRef(false);
+  const phaseRef = useRef<Phase>('idle'); const activeRef = useRef(0); const handledEnd = useRef(false); const repeatIndexRef = useRef(0);
   const completedRef = useRef(new Set<string>()); const progressBase = useRef({ playback: 0, session: 0 }); const progressDelta = useRef({ playback: 0, session: 0 }); const lastMediaTime = useRef(0);
   const [manifest, setManifest] = useState<LessonManifest | null>(null); const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading'); const [error, setError] = useState('');
   const [isPlaying, setIsPlaying] = useState(false); const [buffering, setBuffering] = useState(false); const [currentTime, setCurrentTime] = useState(0); const [duration, setDuration] = useState(0);
-  const [activeIndex, setActiveIndex] = useState(0); const [phase, setPhaseState] = useState<Phase>('idle'); const [countdown, setCountdown] = useState(0); const [studyMode, setStudyMode] = useState(true);
+  const [activeIndex, setActiveIndex] = useState(0); const [phase, setPhaseState] = useState<Phase>('idle'); const [countdown, setCountdown] = useState(0); const [repeatIndex, setRepeatIndex] = useState(0); const [studyMode, setStudyMode] = useState(true);
   const [speed, setSpeed] = useState(1); const [volume, setVolume] = useState(.85); const [query, setQuery] = useState(''); const [tab, setTab] = useState<'transcript' | 'vocabulary'>('transcript');
   const [importUrl, setImportUrl] = useState(''); const [importing, setImporting] = useState(false); const [dictionary, setDictionary] = useState<DictionaryEntry | null>(null); const [dictionaryLoading, setDictionaryLoading] = useState(false); const [inspectedWord, setInspectedWord] = useState(''); const [tooltip, setTooltip] = useState<{ x: number; y: number; above: boolean } | null>(null);
   const [translatingCueIds, setTranslatingCueIds] = useState<Set<string>>(() => new Set());
@@ -30,13 +31,13 @@ export default function PlayerPage() {
   const lessonCourse = data!.courses.find((course) => course.lessons.some((lesson) => lesson.id === lessonId));
   const selectedCourse = preferredCourse?.lessons.some((lesson) => lesson.id === lessonId) ? preferredCourse : lessonCourse || preferredCourse || data!.courses[0];
   const lessonIndex = selectedCourse?.lessons.findIndex((lesson) => lesson.id === lessonId) ?? -1;
-  const videoHidden = Boolean(data!.settings.videoHidden); const waitSeconds = Number(data!.settings.waitSeconds || 3);
+  const videoHidden = Boolean(data!.settings.videoHidden); const waitSeconds = Number(data!.settings.waitSeconds || 3); const repeatCount = normalizeRepeatCount(data!.settings.repeatCount);
 
   const loadLesson = useCallback(async (id: string, force = false) => {
     lessonAbortRef.current?.abort(); const controller = new AbortController(); lessonAbortRef.current = controller;
     const version = ++requestVersion.current;
     videoRef.current?.pause(); hlsRef.current?.destroy(); hlsRef.current = null;
-    setManifest(null); setStatus('loading'); setError(''); setQuery(''); setCurrentTime(0); setDuration(0); setActiveIndex(0); activeRef.current = 0; setPhase('idle'); setCountdown(0); setTranslatingCueIds(new Set()); completedRef.current = new Set(); progressDelta.current = { playback: 0, session: 0 };
+    setManifest(null); setStatus('loading'); setError(''); setQuery(''); setCurrentTime(0); setDuration(0); setActiveIndex(0); activeRef.current = 0; repeatIndexRef.current = 0; setRepeatIndex(0); setPhase('idle'); setCountdown(0); setTranslatingCueIds(new Set()); completedRef.current = new Set(); progressDelta.current = { playback: 0, session: 0 };
     try {
       let result = await api<LessonManifest>(force ? `/api/lessons/${id}/refresh` : `/api/lessons/${id}`, { method: force ? 'POST' : 'GET', signal: controller.signal });
       if ((!result.playback || result.lesson.importStatus !== 'ready') && !force) result = await api<LessonManifest>(`/api/lessons/${id}/refresh`, { method: 'POST', signal: controller.signal });
@@ -74,6 +75,7 @@ export default function PlayerPage() {
 
   const playCue = useCallback((index: number, nextPhase: Phase = 'listening') => {
     const video = videoRef.current; const cue = manifest?.cues[index]; if (!video || !cue) return;
+    if (nextPhase === 'listening') { repeatIndexRef.current = 0; setRepeatIndex(0); }
     activeRef.current = index; setActiveIndex(index); handledEnd.current = false; setPhase(nextPhase); video.currentTime = cue.start + .02;
     video.play().catch((reason: Error) => { setError(`浏览器阻止了播放：${reason.message}`); setStatus('error'); });
   }, [manifest?.cues, setPhase]);
@@ -86,14 +88,17 @@ export default function PlayerPage() {
     const cue = manifest.cues[activeRef.current];
     if (studyMode && cue && ['listening', 'repeat'].includes(phaseRef.current) && time >= cue.end - .04 && !handledEnd.current) {
       handledEnd.current = true; video.pause(); completedRef.current.add(cue.id);
-      if (phaseRef.current === 'repeat') setPhase('ready'); else { setPhase('pause'); setCountdown(waitSeconds); }
+      const nextPhase = phaseAfterCue(phaseRef.current as 'listening' | 'repeat', repeatIndexRef.current, repeatCount);
+      setPhase(nextPhase); setCountdown(nextPhase === 'pause' ? waitSeconds : 0);
     }
-  }, [manifest, studyMode, waitSeconds, setPhase]);
+  }, [manifest, repeatCount, studyMode, waitSeconds, setPhase]);
 
   useEffect(() => {
-    if (phase !== 'pause') return; if (countdown <= 0) { playCue(activeRef.current, 'repeat'); return; }
+    if (phase !== 'pause') return;
+    if (repeatIndexRef.current >= repeatCount) { setPhase('ready'); setCountdown(0); return; }
+    if (countdown <= 0) { repeatIndexRef.current += 1; setRepeatIndex(repeatIndexRef.current); playCue(activeRef.current, 'repeat'); return; }
     const timer = window.setTimeout(() => setCountdown((value) => value - 1), 1000); return () => window.clearTimeout(timer);
-  }, [phase, countdown, playCue]);
+  }, [phase, countdown, playCue, repeatCount, setPhase]);
 
   useEffect(() => {
     const timer = window.setInterval(() => { if (document.visibilityState === 'visible' && (isPlaying || phaseRef.current === 'pause')) progressDelta.current.session += 1; }, 1000);
@@ -147,10 +152,10 @@ export default function PlayerPage() {
           {videoHidden && <button className="audio-only" onClick={togglePlay}><EyeOff /><span>仅听音频</span><strong>{manifest.lesson.title}</strong></button>}
           {!videoHidden && !isPlaying && !buffering && <button className="big-play" onClick={togglePlay} aria-label="播放"><Play fill="currentColor" /></button>}
           {buffering && <div className="stage-status"><LoaderCircle className="spin" />缓冲中</div>}
-          {phase !== 'idle' && <div className={`stage-status ${phase === 'pause' ? 'counting' : ''}`}>{phase === 'pause' ? <><span className="countdown-number">{countdown}</span>复述原句</> : ({ listening: '听原句', repeat: '核对原句', ready: '点击下一句' } as Record<string,string>)[phase]}</div>}
+          {phase !== 'idle' && <div className={`stage-status ${phase === 'pause' ? 'counting' : ''}`}>{phase === 'pause' ? <><span className="countdown-number">{countdown}</span>复述原句 · 下一次 {repeatIndex + 1}/{repeatCount}</> : phase === 'repeat' ? `重复原句 ${repeatIndex}/${repeatCount}` : ({ listening: '听原句', ready: '点击下一句' } as Record<string,string>)[phase]}</div>}
         </div>
         <div className="transport"><button className="play-button" onClick={togglePlay} aria-label={isPlaying ? '暂停' : '播放'}>{isPlaying ? <Pause fill="currentColor" /> : <Play fill="currentColor" />}</button><span className="timecode">{formatTime(currentTime)} / {formatTime(duration || manifest.lesson.duration || 0)}</span><input className="timeline" type="range" min="0" max={duration || manifest.lesson.duration || 0} step="0.1" value={currentTime} onChange={(event) => { const time = Number(event.target.value); if (videoRef.current) videoRef.current.currentTime = time; setCurrentTime(time); }} aria-label="播放进度" /><Volume2 className="volume-icon" size={16} /><input className="volume" type="range" min="0" max="1" step=".05" value={volume} onChange={(event) => { const value = Number(event.target.value); setVolume(value); if (videoRef.current) videoRef.current.volume = value; }} aria-label="音量" /><button className="speed-button" onClick={() => { const values = [.75, 1, 1.25, 1.5, 2]; const next = values[(values.indexOf(speed) + 1) % values.length]; setSpeed(next); if (videoRef.current) videoRef.current.playbackRate = next; }}>{speed}×</button><button className="icon-button" onClick={() => void updateSettings({ videoHidden: !videoHidden })} aria-label={videoHidden ? '显示视频' : '隐藏视频'}>{videoHidden ? <Eye /> : <EyeOff />}</button><button className="icon-button" onClick={() => videoRef.current?.requestFullscreen()} aria-label="全屏"><Maximize /></button></div>
-        <div className="study-bar"><label className="mode-toggle"><input type="checkbox" checked={studyMode} onChange={(event) => { setStudyMode(event.target.checked); setPhase('idle'); }} /><span className="toggle-track"><span /></span><span><strong>学习模式</strong><small>听一句 · 复述 · 再听</small></span></label><div className="wait-setting"><span>复述时间</span><button onClick={() => void updateSettings({ waitSeconds: Math.max(1, waitSeconds - 1) })}>−</button><strong>{waitSeconds}s</strong><button onClick={() => void updateSettings({ waitSeconds: Math.min(15, waitSeconds + 1) })}>+</button></div><div className="study-actions"><button className="secondary-button" disabled={activeIndex <= 0} onClick={() => playCue(activeIndex - 1)}><RotateCcw size={14} />上一句</button><button className="next-button" disabled={activeIndex >= manifest.cues.length - 1} onClick={() => playCue(activeIndex + 1)}><SkipForward size={14} />下一句</button></div></div>
+        <div className="study-bar"><label className="mode-toggle"><input type="checkbox" checked={studyMode} onChange={(event) => { setStudyMode(event.target.checked); repeatIndexRef.current = 0; setRepeatIndex(0); setPhase('idle'); }} /><span className="toggle-track"><span /></span><span><strong>学习模式</strong><small>听一句 · 复述 · 重复 {repeatCount} 次</small></span></label><div className="wait-setting" title="复述时间"><span>复述时间</span><button disabled={waitSeconds <= 1} aria-label="减少复述时间" onClick={() => void updateSettings({ waitSeconds: Math.max(1, waitSeconds - 1) })}>−</button><strong>{waitSeconds}s</strong><button disabled={waitSeconds >= 15} aria-label="增加复述时间" onClick={() => void updateSettings({ waitSeconds: Math.min(15, waitSeconds + 1) })}>+</button></div><div className="wait-setting repeat-setting" title="重复次数"><span>重复次数</span><button disabled={repeatCount <= 0} aria-label="减少重复次数" onClick={() => void updateSettings({ repeatCount: Math.max(0, repeatCount - 1) })}>−</button><strong>{repeatCount}次</strong><button disabled={repeatCount >= 9} aria-label="增加重复次数" onClick={() => void updateSettings({ repeatCount: Math.min(9, repeatCount + 1) })}>+</button></div><div className="study-actions"><button className="secondary-button" disabled={activeIndex <= 0} onClick={() => playCue(activeIndex - 1)}><RotateCcw size={14} />上一句</button><button className="next-button" disabled={activeIndex >= manifest.cues.length - 1} onClick={() => playCue(activeIndex + 1)}><SkipForward size={14} />下一句</button></div></div>
         <div className="current-sentence"><div className="sentence-kicker"><Languages size={14} />当前句 · {activeIndex + 1}/{manifest.cues.length} · {translationLabel}</div><div className="sentence-grid"><div className="sentence-en"><p>{cue?.en || '本集没有可用的英文字幕'}</p></div><div className="sentence-zh">{cue?.zh ? <p>{cue.zh}</p> : cue && <button className="translate-cue-button" disabled={translatingCueIds.has(cue.id)} onClick={() => void translateSentence(cue.id)}>{translatingCueIds.has(cue.id) ? <LoaderCircle className="spin" /> : <Languages />}{translatingCueIds.has(cue.id) ? '免费翻译中' : '免费翻译本句'}</button>}</div></div></div>
       </section>
     </main>;

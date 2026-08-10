@@ -21,7 +21,11 @@ export const progressSchema = z.object({
   activeCue: z.number().int().min(0).optional(),
   completedCueIds: z.array(z.string()).optional(),
 });
-export const settingsSchema = z.record(z.union([z.string(), z.number(), z.boolean(), z.null()]));
+const settingValueSchema = z.union([z.string(), z.number(), z.boolean(), z.null()]);
+export const settingsSchema = z.object({
+  waitSeconds: z.number().int().min(1).max(15).optional(),
+  repeatCount: z.number().int().min(0).max(9).optional(),
+}).catchall(settingValueSchema);
 export const vocabularySchema = z.object({
   word: z.string().trim().min(1).max(80),
   lessonId: z.string().uuid().nullable().optional(),

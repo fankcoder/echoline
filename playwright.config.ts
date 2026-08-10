@@ -10,7 +10,7 @@ export default defineConfig({
   webServer: {
     command: 'npm run dev:e2e',
     url: 'http://127.0.0.1:5174/api/health',
-    reuseExistingServer: false,
+    reuseExistingServer: !process.env.CI,
     timeout: 60_000,
   },
 });

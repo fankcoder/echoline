@@ -7,7 +7,7 @@ export type Lesson = {
 };
 export type Course = { id: string; name: string; createdAt: number; updatedAt: number; lessons: Lesson[] };
 export type VocabularyItem = { word: string; lessonId: string | null; cueId: string | null; addedAt: number; reviewCount: number; lastReviewedAt: number | null; groupIndex: number };
-export type Settings = { darkMode?: boolean; videoHidden?: boolean; waitSeconds?: number; selectedCourseId?: string; currentLessonId?: string; localStorageMigrated?: boolean; [key: string]: unknown };
+export type Settings = { darkMode?: boolean; videoHidden?: boolean; waitSeconds?: number; repeatCount?: number; selectedCourseId?: string; currentLessonId?: string; localStorageMigrated?: boolean; [key: string]: unknown };
 export type Stats = { playbackSeconds: number; sessionSeconds: number; learnedLessons: number };
 export type Bootstrap = { courses: Course[]; vocabulary: VocabularyItem[]; settings: Settings; stats: Stats; migrationVersion: number };
 export type LessonManifest = {
