@@ -110,7 +110,7 @@ export async function resolveLessonAssets(sourceUrl: string, fallbackTitle?: str
   let officialChinese: string[] | undefined;
   if (chineseUrl && chineseUrl !== englishUrl) {
     try {
-      const chinese = parseVtt((await safeFetch(chineseUrl, ASSET_HOSTS, MAX_CAPTION_BYTES)).text);
+      const chinese = parseVtt((await safeFetch(chineseUrl, ASSET_HOSTS, MAX_CAPTION_BYTES)).text, 'zh');
       if (chinese.length === cues.length) officialChinese = chinese.map((cue) => cue.en);
     } catch { /* official Chinese is optional */ }
   }

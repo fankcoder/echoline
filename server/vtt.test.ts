@@ -17,4 +17,37 @@ describe('VTT parser', () => {
     expect(captionHash(a)).toBe(captionHash(a));
     expect(captionHash(a)).not.toBe(captionHash(b));
   });
+
+  it('reassembles time-sliced captions into complete sentences', () => {
+    const cues = parseVtt(`WEBVTT
+
+00:00:00.000 --> 00:00:04.000
+AI systems have learned patterns from reading large amounts of text
+
+00:00:04.000 --> 00:00:08.000
+from the internet. By understanding what is in that text,
+
+00:00:08.000 --> 00:00:12.000
+you can predict how they will behave.`);
+
+    expect(cues.map((cue) => cue.en)).toEqual([
+      'AI systems have learned patterns from reading large amounts of text from the internet.',
+      'By understanding what is in that text, you can predict how they will behave.',
+    ]);
+    expect(cues[0].start).toBe(0);
+    expect(cues[0].end).toBeGreaterThan(4);
+    expect(cues[1].start).toBeLessThan(8);
+    expect(cues[1].end).toBe(12);
+  });
+
+  it('does not merge captions across a long pause', () => {
+    const cues = parseVtt(`WEBVTT
+
+00:00:00.000 --> 00:00:01.000
+First fragment
+
+00:00:03.000 --> 00:00:04.000
+Second fragment`);
+    expect(cues.map((cue) => cue.en)).toEqual(['First fragment', 'Second fragment']);
+  });
 });

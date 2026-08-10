@@ -259,7 +259,7 @@ export class EchoDatabase {
   }
 
   getDictionary(word: string) { const row = this.db.prepare('SELECT * FROM dictionary_cache WHERE word=?').get(word) as any; return row ? JSON.parse(row.payload) : null; }
-  saveDictionary(word: string, payload: unknown, source: string) { this.db.prepare('INSERT INTO dictionary_cache(word,payload,source,version,expires_at,updated_at) VALUES(?,?,?,?,?,?) ON CONFLICT(word) DO UPDATE SET payload=excluded.payload,source=excluded.source,version=excluded.version,expires_at=excluded.expires_at,updated_at=excluded.updated_at').run(word, JSON.stringify(payload), source, 'v1', Date.now() + 90 * 86400000, Date.now()); }
+  saveDictionary(word: string, payload: unknown, source: string, version = 'v1') { this.db.prepare('INSERT INTO dictionary_cache(word,payload,source,version,expires_at,updated_at) VALUES(?,?,?,?,?,?) ON CONFLICT(word) DO UPDATE SET payload=excluded.payload,source=excluded.source,version=excluded.version,expires_at=excluded.expires_at,updated_at=excluded.updated_at').run(word, JSON.stringify(payload), source, version, Date.now() + 365 * 86400000, Date.now()); }
 
   createJob(lessonId: string) { const id = randomUUID(); const now = Date.now(); this.db.prepare("INSERT INTO jobs(id,lesson_id,type,status,progress,created_at,updated_at) VALUES(?,?,'translation','queued',0,?,?)").run(id, lessonId, now, now); return id; }
   updateJob(id: string, status: string, progress: number, error?: string) { this.db.prepare('UPDATE jobs SET status=?,progress=?,error=?,updated_at=? WHERE id=?').run(status, progress, error || null, Date.now(), id); }

@@ -25,10 +25,15 @@ npm start
 
 - 导入公开课时后，英文字幕立即可用。
 - 有官方中文字幕时直接保存并使用，不调用 LLM。
-- 没有官方中文字幕时，通过 `.env` 中的 OpenAI 兼容接口按批次后台翻译。
+- 没有官方中文字幕时，通过 `.env` 中的 OpenAI 兼容接口按批次后台翻译；后端会自动适配 Responses 和 Chat Completions 协议。
 - 翻译以英文字幕哈希、模型和提示版本为缓存键保存到 SQLite；刷新、切集或重启不会重复计费。
 - 没有配置 `OPENAI_API_KEY` 时只显示英文字幕，并提供明确状态，不影响播放器。
-- 查词优先使用 `ECDICT_PATH` 指向的 ECDICT SQLite 数据库，Free Dictionary 只补充英文释义、例句和发音，不用免费机翻生成中文词义。
+- 首次使用前运行 `npm run dictionary:install`，安装约 77 万词条的 ECDICT 离线英汉词典；默认保存到 `data/dictionaries/ecdict.db`。
+- 查词只使用 ECDICT/内置英汉释义作为中文词义，不再把免费英文接口的英文 definition 当成中文翻译。若显式配置 `DICTIONARY_REMOTE_SUPPLEMENT=true`，Free Dictionary 仅补充发音和英文例句。
+
+ECDICT 数据来自 [skywind3000/ECDICT](https://github.com/skywind3000/ECDICT)，按其 MIT License 使用；大型词典数据库只下载到用户本机，不提交到 Git，也不随 EchoLine 重新分发。
+
+字幕导入时会把网站按时间切开的 VTT 小片段重新组合为完整语义句。句界采用英文句子分割规则，长停顿仍保留为独立片段，逐句学习不再从句子中间开始。
 
 ## 数据
 
