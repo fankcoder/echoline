@@ -241,7 +241,10 @@ button { cursor: pointer; }
 .player-import + .workspace { height: calc(100vh - 114px); }
 .lesson-side select { max-width: 260px; height: 30px; border: 1px solid var(--line); border-radius: 5px; background: var(--white); color: var(--ink); padding: 0 28px 0 9px; font-size: 10px; }
 .translation-pending { color: #9b7b56; font-style: italic; }
-.translation-retry { min-height: 30px; margin: 8px 14px 12px; border: 1px solid #e2b7a8; border-radius: 5px; background: #fff5f1; color: #9d493a; padding: 0 10px; font-size: 10px; }
+.translate-cue-button { min-height: 30px; display: inline-flex; align-items: center; justify-content: center; gap: 6px; border: 1px solid #b9d9cc; border-radius: 5px; background: #f3faf7; color: var(--green-dark); padding: 0 10px; font-size: 10px; font-style: normal; font-weight: 600; cursor: pointer; }
+.translate-cue-button svg { width: 13px; height: 13px; }
+.translate-cue-button:hover:not(:disabled) { border-color: var(--green); background: var(--green-soft); }
+.translate-cue-button:disabled { opacity: .65; cursor: wait; }
 .manager-heading-actions { display: flex; align-items: center; gap: 7px; }
 .manager-heading-actions a { text-decoration: none; }
 .content-form .wide-field { grid-column: span 2; }
@@ -262,7 +265,7 @@ button { cursor: pointer; }
 .dark-mode .review-page { background: #101512; }
 .dark-mode .player-import button { color: #fff; background: #0b110e; }
 .dark-mode .translation-pending { color: #d2af83; }
-.dark-mode .translation-retry { border-color: #70483d; background: #30211e; color: #ffad98; }
+.dark-mode .translate-cue-button { border-color: #315c4b; background: #183027; color: #8be0bd; }
 
 @media (max-width: 1100px) {
   .player-import + .workspace { height: auto; }
@@ -375,7 +378,6 @@ button { cursor: pointer; }
 .sentence-en { border-right: 0; border-bottom: 1px solid var(--line); }
 .sentence-en p { font-size: 14px; line-height: 1.55; }
 .sentence-zh p { font-size: 12px; line-height: 1.6; }
-.translation-retry { width: calc(100% - 20px); margin: 8px 10px 10px; }
 .panel-tabs { padding: 0 26px; gap: 22px; }
 .panel-tools,.transcript-toolbar { padding: 7px 26px; }
 .transcript-head {

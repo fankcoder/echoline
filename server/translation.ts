@@ -1,9 +1,9 @@
 import type { EchoDatabase } from './db.js';
 
 const PROMPT_VERSION = 'bilingual-cue-v2';
-const running = new Set<string>();
 let requestQueue = Promise.resolve();
 let lastRequestFinishedAt = 0;
+const cueRequests = new Map<string, Promise<TranslationRow>>();
 const SYSTEM_PROMPT = 'Translate every English technical-course subtitle into natural, accurate Simplified Chinese. Use standard Chinese technical terminology. Preserve every id and return only a JSON array of objects shaped as [{"id":"...","text":"..."}]. Do not use Markdown, merge, split, omit, or reorder subtitles.';
 
 type TranslationRow = { id: string; text: string };
@@ -23,7 +23,6 @@ function config() {
     baseUrl: (process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1').replace(/\/$/, ''),
     model: process.env.OPENAI_MODEL || 'gpt-4.1-mini',
     timeout: Number(process.env.OPENAI_TIMEOUT_MS || 45_000),
-    batchSize: Math.max(1, Math.min(20, Number(process.env.OPENAI_TRANSLATION_BATCH_SIZE || 10))),
     protocol: configuredProtocol === 'responses' || configuredProtocol === 'chat-completions' ? configuredProtocol : 'auto',
   } as const;
 }
@@ -165,42 +164,26 @@ async function translateBatch(rows: InputRow[]): Promise<TranslationRow[]> {
   throw lastError;
 }
 
-export function startTranslation(db: EchoDatabase, lessonId: string): string {
-  const lesson = db.getLesson(lessonId);
-  if (!lesson) throw new Error('课时不存在');
+export async function translateCue(db: EchoDatabase, lessonId: string, cueId: string): Promise<TranslationRow> {
+  if (!db.getLesson(lessonId)) throw new Error('课时不存在');
   const { cues, sourceHash, sourceKind } = db.getCues(lessonId);
   if (!sourceHash || !cues.length) throw new Error('课时没有可翻译的英文字幕');
-  const jobId = db.createJob(lessonId);
-  if (sourceKind === 'official' || cues.every((cue) => cue.zh)) {
-    db.updateJob(jobId, 'completed', 1); db.setTranslationState(lessonId, 'ready', 1); return jobId;
-  }
-  if (running.has(lessonId)) { db.updateJob(jobId, 'waiting', lesson.translationProgress); return jobId; }
+  const cue = cues.find((item) => item.id === cueId);
+  if (!cue) throw new Error('字幕句子不存在');
+  if (sourceKind === 'official' || cue.zh) return { id: cue.id, text: cue.zh || '' };
   const settings = config();
-  if (!settings.apiKey) {
-    const error = '未配置 OPENAI_API_KEY；英文字幕仍可正常使用';
-    db.updateJob(jobId, 'failed', 0, error); db.setTranslationState(lessonId, 'failed', 0); return jobId;
-  }
-  running.add(lessonId);
-  void (async () => {
-    try {
-      db.updateJob(jobId, 'running', 0); db.setTranslationState(lessonId, 'running', 0);
-      const pending = cues.filter((cue) => !cue.zh);
-      const batchSize = protocols(settings.model, settings.protocol)[0] === 'responses' ? Math.min(3, settings.batchSize) : settings.batchSize;
-      for (let index = 0; index < pending.length; index += batchSize) {
-        const batch = pending.slice(index, index + batchSize).map(({ id, en }) => ({ id, en }));
-        const translated = await translateBatch(batch);
-        db.saveTranslations(lessonId, sourceHash, translated, 'openai-compatible', settings.model, PROMPT_VERSION);
-        const progress = Math.min(1, (index + batch.length) / pending.length);
-        db.updateJob(jobId, 'running', progress); db.setTranslationState(lessonId, 'running', progress);
-      }
-      db.updateJob(jobId, 'completed', 1); db.setTranslationState(lessonId, 'ready', 1);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : '翻译失败';
-      const progress = db.getJob(jobId)?.progress || 0;
-      db.updateJob(jobId, 'failed', progress, message); db.setTranslationState(lessonId, 'failed', progress);
-    } finally { running.delete(lessonId); }
+  if (!settings.apiKey) throw new Error('未配置 OPENAI_API_KEY；请先配置 .env 再翻译本句');
+  const requestKey = `${lessonId}:${sourceHash}:${cueId}`;
+  const existing = cueRequests.get(requestKey);
+  if (existing) return existing;
+  const request = (async () => {
+    const translated = (await translateBatch([{ id: cue.id, en: cue.en }]))[0];
+    db.saveTranslations(lessonId, sourceHash, [translated], 'openai-compatible', settings.model, PROMPT_VERSION);
+    db.updateTranslationCoverage(lessonId);
+    return translated;
   })();
-  return jobId;
+  cueRequests.set(requestKey, request);
+  try { return await request; } finally { cueRequests.delete(requestKey); }
 }
 
 export const __testing = { apiError, parseResponse, protocols, responseText, splitLongCue, unsupportedProtocol };

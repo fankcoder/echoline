@@ -5,7 +5,7 @@ import { z, ZodError } from 'zod';
 import { EchoDatabase } from './db.js';
 import { lookupWord } from './dictionary.js';
 import { resolveLessonAssets, RESOLVER_VERSION } from './resolver.js';
-import { startTranslation } from './translation.js';
+import { translateCue } from './translation.js';
 import { addLessonSchema, createCourseSchema, progressSchema, reorderSchema, resolveLessonSchema, settingsSchema, updateCourseSchema, vocabularySchema } from './types.js';
 
 type PlaybackAsset = { mediaUrl: string; resolvedAt: number; resolverVersion: string };
@@ -49,8 +49,6 @@ export async function buildApp(options: { database?: EchoDatabase; production?: 
       const assets = await resolveLessonAssets(sourceUrl, title);
       db.saveResolvedLesson({ id: lesson.id, sourceUrl, sourceVideoId: assets.sourceVideoId || undefined, title: title || assets.title, duration: assets.duration || undefined, cues: assets.cues, hash: assets.hash, officialChinese: assets.officialChinese });
       playbackAssets.set(lesson.id, { mediaUrl: assets.mediaUrl, resolvedAt: Date.now(), resolverVersion: RESOLVER_VERSION });
-      const updated = hydrate(lesson.id)!;
-      if (!assets.officialChinese?.length && updated.lesson.translationStatus === 'idle') startTranslation(db, lesson.id);
       return hydrate(lesson.id)!;
     } catch (error) { db.markLessonFailed(lesson.id); throw error; }
   };
@@ -85,9 +83,10 @@ export async function buildApp(options: { database?: EchoDatabase; production?: 
     if (input.sourceUrl) reply.send(await resolveAndSave(input.sourceUrl, input.title, id)); else reply.send(hydrate(id));
   });
 
-  app.post('/api/lessons/:id/translations', async (request, reply) => {
-    const { id } = z.object({ id: z.string().uuid() }).parse(request.params);
-    reply.code(202).send({ jobId: startTranslation(db, id) });
+  app.post('/api/lessons/:id/translations/:cueId', async (request, reply) => {
+    const { id, cueId } = z.object({ id: z.string().uuid(), cueId: z.string().min(1).max(120) }).parse(request.params);
+    await translateCue(db, id, cueId);
+    reply.send(hydrate(id));
   });
   app.get('/api/jobs/:id', async (request, reply) => {
     const { id } = z.object({ id: z.string().uuid() }).parse(request.params);

@@ -76,6 +76,8 @@ export class EchoDatabase {
     this.db = new DatabaseSync(filename);
     this.db.exec(schema);
     this.seed();
+    const lessons = this.db.prepare('SELECT id FROM lessons').all() as Array<{ id: string }>;
+    lessons.forEach(({ id }) => this.updateTranslationCoverage(id));
   }
 
   private seed() {
@@ -265,6 +267,12 @@ export class EchoDatabase {
   updateJob(id: string, status: string, progress: number, error?: string) { this.db.prepare('UPDATE jobs SET status=?,progress=?,error=?,updated_at=? WHERE id=?').run(status, progress, error || null, Date.now(), id); }
   getJob(id: string) { const row = this.db.prepare('SELECT * FROM jobs WHERE id=?').get(id) as any; return row ? { id: row.id, lessonId: row.lesson_id, type: row.type, status: row.status, progress: row.progress, error: row.error, createdAt: row.created_at, updatedAt: row.updated_at } : null; }
   setTranslationState(lessonId: string, status: string, progress: number) { this.db.prepare('UPDATE lessons SET translation_status=?,translation_progress=?,updated_at=? WHERE id=?').run(status, progress, Date.now(), lessonId); }
+  updateTranslationCoverage(lessonId: string) {
+    const { cues } = this.getCues(lessonId); const translated = cues.filter((cue) => cue.zh).length;
+    const progress = cues.length ? translated / cues.length : 0;
+    this.db.prepare('UPDATE lessons SET translation_status=?,translation_progress=? WHERE id=?').run(cues.length && translated === cues.length ? 'ready' : 'idle', progress, lessonId);
+    return progress;
+  }
   saveTranslations(lessonId: string, sourceHash: string, rows: Array<{ id: string; text: string }>, provider: string, model: string, promptVersion: string) { const statement = this.db.prepare('INSERT OR REPLACE INTO translations(lesson_id,cue_id,source_hash,target_language,provider,model,prompt_version,text,created_at) VALUES(?,?,?,?,?,?,?,?,?)'); this.transaction(() => rows.forEach((row) => statement.run(lessonId, row.id, sourceHash, 'zh-CN', provider, model, promptVersion, row.text, Date.now()))); }
 
   exportData() {

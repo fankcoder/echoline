@@ -25,8 +25,8 @@ npm start
 
 - 导入公开课时后，英文字幕立即可用。
 - 有官方中文字幕时直接保存并使用，不调用 LLM。
-- 没有官方中文字幕时，通过 `.env` 中的 OpenAI 兼容接口按批次后台翻译；后端会自动适配 Responses 和 Chat Completions 协议。
-- 翻译以英文字幕哈希、模型和提示版本为缓存键保存到 SQLite；刷新、切集或重启不会重复计费。
+- 没有官方中文字幕时，页面不会自动调用 LLM。用户点击某句旁边的“翻译本句”后，才通过 `.env` 中的 OpenAI 兼容接口翻译该句；后端会自动适配 Responses 和 Chat Completions 协议。
+- 单句翻译以英文字幕哈希、模型和提示版本为缓存键保存到 SQLite；重复点击、刷新、切集或重启不会重复计费。
 - 没有配置 `OPENAI_API_KEY` 时只显示英文字幕，并提供明确状态，不影响播放器。
 - 首次使用前运行 `npm run dictionary:install`，安装约 77 万词条的 ECDICT 离线英汉词典；默认保存到 `data/dictionaries/ecdict.db`。
 - 查词只使用 ECDICT/内置英汉释义作为中文词义，不再把免费英文接口的英文 definition 当成中文翻译。若显式配置 `DICTIONARY_REMOTE_SUPPLEMENT=true`，Free Dictionary 仅补充发音和英文例句。

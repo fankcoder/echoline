@@ -14,7 +14,7 @@ export default function PlayerPage() {
   const { lessonId = '' } = useParams(); const navigate = useNavigate();
   const { data, refresh, updateSettings, notify } = useAppState();
   const videoRef = useRef<HTMLVideoElement>(null); const requestVersion = useRef(0); const hlsRef = useRef<Hls | null>(null);
-  const lessonAbortRef = useRef<AbortController | null>(null); const pollingAbortRef = useRef<AbortController | null>(null); const activeLessonRef = useRef(lessonId);
+  const lessonAbortRef = useRef<AbortController | null>(null); const activeLessonRef = useRef(lessonId);
   const phaseRef = useRef<Phase>('idle'); const activeRef = useRef(0); const handledEnd = useRef(false);
   const completedRef = useRef(new Set<string>()); const progressBase = useRef({ playback: 0, session: 0 }); const progressDelta = useRef({ playback: 0, session: 0 }); const lastMediaTime = useRef(0);
   const [manifest, setManifest] = useState<LessonManifest | null>(null); const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading'); const [error, setError] = useState('');
@@ -22,6 +22,7 @@ export default function PlayerPage() {
   const [activeIndex, setActiveIndex] = useState(0); const [phase, setPhaseState] = useState<Phase>('idle'); const [countdown, setCountdown] = useState(0); const [studyMode, setStudyMode] = useState(true);
   const [speed, setSpeed] = useState(1); const [volume, setVolume] = useState(.85); const [query, setQuery] = useState(''); const [tab, setTab] = useState<'transcript' | 'vocabulary'>('transcript');
   const [importUrl, setImportUrl] = useState(''); const [importing, setImporting] = useState(false); const [dictionary, setDictionary] = useState<DictionaryEntry | null>(null); const [dictionaryLoading, setDictionaryLoading] = useState(false); const [inspectedWord, setInspectedWord] = useState(''); const [tooltip, setTooltip] = useState<{ x: number; y: number; above: boolean } | null>(null);
+  const [translatingCueIds, setTranslatingCueIds] = useState<Set<string>>(() => new Set());
 
   activeLessonRef.current = lessonId;
   const setPhase = useCallback((next: Phase) => { phaseRef.current = next; setPhaseState(next); }, []);
@@ -32,10 +33,10 @@ export default function PlayerPage() {
   const videoHidden = Boolean(data!.settings.videoHidden); const waitSeconds = Number(data!.settings.waitSeconds || 3);
 
   const loadLesson = useCallback(async (id: string, force = false) => {
-    lessonAbortRef.current?.abort(); pollingAbortRef.current?.abort(); const controller = new AbortController(); lessonAbortRef.current = controller;
+    lessonAbortRef.current?.abort(); const controller = new AbortController(); lessonAbortRef.current = controller;
     const version = ++requestVersion.current;
     videoRef.current?.pause(); hlsRef.current?.destroy(); hlsRef.current = null;
-    setManifest(null); setStatus('loading'); setError(''); setQuery(''); setCurrentTime(0); setDuration(0); setActiveIndex(0); activeRef.current = 0; setPhase('idle'); setCountdown(0); completedRef.current = new Set(); progressDelta.current = { playback: 0, session: 0 };
+    setManifest(null); setStatus('loading'); setError(''); setQuery(''); setCurrentTime(0); setDuration(0); setActiveIndex(0); activeRef.current = 0; setPhase('idle'); setCountdown(0); setTranslatingCueIds(new Set()); completedRef.current = new Set(); progressDelta.current = { playback: 0, session: 0 };
     try {
       let result = await api<LessonManifest>(force ? `/api/lessons/${id}/refresh` : `/api/lessons/${id}`, { method: force ? 'POST' : 'GET', signal: controller.signal });
       if ((!result.playback || result.lesson.importStatus !== 'ready') && !force) result = await api<LessonManifest>(`/api/lessons/${id}/refresh`, { method: 'POST', signal: controller.signal });
@@ -46,7 +47,7 @@ export default function PlayerPage() {
     } catch (reason) { if (version === requestVersion.current && (reason as Error).name !== 'AbortError') { setStatus('error'); setError((reason as Error).message); } }
   }, [selectedCourse?.id, setPhase, updateSettings]);
 
-  useEffect(() => { void loadLesson(lessonId); return () => { requestVersion.current += 1; lessonAbortRef.current?.abort(); pollingAbortRef.current?.abort(); }; }, [lessonId, loadLesson]);
+  useEffect(() => { void loadLesson(lessonId); return () => { requestVersion.current += 1; lessonAbortRef.current?.abort(); }; }, [lessonId, loadLesson]);
 
   useEffect(() => {
     const video = videoRef.current; const mediaUrl = manifest?.playback?.mediaUrl;
@@ -67,27 +68,9 @@ export default function PlayerPage() {
       });
     } else video.src = mediaUrl;
     return () => { video.removeEventListener('loadedmetadata', restore); video.removeEventListener('error', onError); hlsRef.current?.destroy(); hlsRef.current = null; };
-  // Media must only be rebuilt when the playback token changes; translation polling must not reload video.
+  // Media must only be rebuilt when the playback token changes.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [manifest?.playback?.mediaUrl, lessonId, loadLesson]);
-
-  useEffect(() => {
-    if (!manifest || !['running', 'idle'].includes(manifest.lesson.translationStatus)) return;
-    const version = requestVersion.current; const revision = manifest.lesson.manifestRevision; const controller = new AbortController(); let timer = 0;
-    pollingAbortRef.current?.abort(); pollingAbortRef.current = controller;
-    const poll = async () => {
-      try {
-        const next = await api<LessonManifest>(`/api/lessons/${lessonId}`, { signal: controller.signal });
-        if (controller.signal.aborted || version !== requestVersion.current || activeLessonRef.current !== lessonId || next.lesson.id !== lessonId || next.lesson.manifestRevision !== revision) return;
-        setManifest((current) => current?.lesson.id === lessonId && current.lesson.manifestRevision === revision ? next : current);
-      } catch (reason) { if ((reason as Error).name !== 'AbortError') { /* player remains available in English */ } }
-      if (!controller.signal.aborted) timer = window.setTimeout(() => void poll(), 1800);
-    };
-    timer = window.setTimeout(() => void poll(), 1800);
-    return () => { window.clearTimeout(timer); controller.abort(); };
-  // Polling intentionally keys off status rather than the entire manifest to avoid restarting on every progress response.
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [lessonId, manifest?.lesson.translationStatus]);
 
   const playCue = useCallback((index: number, nextPhase: Phase = 'listening') => {
     const video = videoRef.current; const cue = manifest?.cues[index]; if (!video || !cue) return;
@@ -139,13 +122,23 @@ export default function PlayerPage() {
     void api<DictionaryEntry>(`/api/dictionary/${encodeURIComponent(word)}`, { signal: controller.signal }).then(setDictionary).catch((reason) => { if ((reason as Error).name !== 'AbortError') setDictionary({ word, ipa: '', type: '', meaning: '词典中暂无释义', note: '', example: '', audio: '', source: '' }); }).finally(() => setDictionaryLoading(false));
   };
   const toggleWord = async (word: string) => { await api('/api/vocabulary/toggle', { method: 'POST', ...jsonBody({ word, lessonId, cueId: manifest?.cues[activeRef.current]?.id }) }); await refresh(); };
-  const translationLabel = manifest?.captionSource === 'official' ? '官方' : manifest?.lesson.translationStatus === 'ready' ? 'AI 已缓存' : manifest?.lesson.translationStatus === 'running' ? `AI 翻译 ${Math.round(manifest.lesson.translationProgress * 100)}%` : manifest?.lesson.translationStatus === 'failed' ? '翻译失败' : '待翻译';
+  const translateSentence = async (cueId: string) => {
+    const current = manifest; if (!current || current.cues.find((item) => item.id === cueId)?.zh || translatingCueIds.has(cueId)) return;
+    setTranslatingCueIds((ids) => new Set(ids).add(cueId));
+    try {
+      const next = await api<LessonManifest>(`/api/lessons/${lessonId}/translations/${encodeURIComponent(cueId)}`, { method: 'POST' });
+      if (activeLessonRef.current === lessonId && next.lesson.id === lessonId && next.lesson.manifestRevision === current.lesson.manifestRevision) setManifest(next);
+    } catch (reason) { notify((reason as Error).message); }
+    finally { setTranslatingCueIds((ids) => { const next = new Set(ids); next.delete(cueId); return next; }); }
+  };
+  const translatedCount = manifest?.cues.filter((item) => item.zh).length || 0;
+  const translationLabel = manifest?.captionSource === 'official' ? '官方' : `${translatedCount} 条已缓存 · 按需`;
 
   if (status === 'loading') return <main className="lesson-loading" aria-live="polite"><LoaderCircle className="spin" /><strong>正在切换课时</strong><span>旧字幕已经清除，正在加载本集媒体和字幕…</span></main>;
   if (status === 'error' || !manifest) return <main className="lesson-loading error-state"><AlertCircle /><strong>本课时暂时无法打开</strong><span>{error}</span><button onClick={() => void loadLesson(lessonId, true)}><RotateCcw size={15} />重新解析</button></main>;
   const cue = manifest.cues[activeIndex];
   return <main className="workspace">
-      <TranscriptPanel cues={manifest.cues} activeIndex={activeIndex} query={query} setQuery={setQuery} onCue={(index) => playCue(index)} vocabulary={data!.vocabulary} tab={tab} setTab={setTab} dictionary={dictionary} dictionaryLoading={dictionaryLoading} inspectedWord={inspectedWord} tooltip={tooltip} onWordHover={inspectWord} onWordLeave={() => setTooltip(null)} onWordToggle={(word) => void toggleWord(word)} onReview={() => navigate('/review/0')} translationLabel={translationLabel} />
+      <TranscriptPanel cues={manifest.cues} activeIndex={activeIndex} query={query} setQuery={setQuery} onCue={(index) => playCue(index)} vocabulary={data!.vocabulary} tab={tab} setTab={setTab} dictionary={dictionary} dictionaryLoading={dictionaryLoading} inspectedWord={inspectedWord} tooltip={tooltip} onWordHover={inspectWord} onWordLeave={() => setTooltip(null)} onWordToggle={(word) => void toggleWord(word)} onTranslate={(cueId) => void translateSentence(cueId)} translatingCueIds={translatingCueIds} onReview={() => navigate('/review/0')} translationLabel={translationLabel} />
       <section className="player-column">
         <div className="player-import"><input value={importUrl} onChange={(event) => setImportUrl(event.target.value)} onKeyDown={(event) => event.key === 'Enter' && void importLesson()} placeholder="粘贴公开课时网址" aria-label="课程网址" /><button onClick={() => void importLesson()} disabled={importing}>{importing ? <LoaderCircle className="spin" /> : <Import size={15} />}{importing ? '解析中' : '导入'}</button></div>
         <div className="lesson-heading"><div><span className="eyebrow">{selectedCourse?.name || '未分类课程'} · 第 {lessonIndex + 1} 集</span><h1>{manifest.lesson.title}</h1></div><div className="lesson-side"><div className="course-actions"><select value={selectedCourse?.id || ''} onChange={(event) => changeCourse(event.target.value)} aria-label="选择课程">{data!.courses.map((course) => <option value={course.id} key={course.id}>{course.name} ({course.lessons.length})</option>)}</select><button className="save-course-button" onClick={async () => { if (!selectedCourse) return; await api(`/api/courses/${selectedCourse.id}/lessons`, { method: 'POST', ...jsonBody({ sourceUrl: manifest.lesson.sourceUrl, lessonId: manifest.lesson.id }) }); await refresh(); notify('已保存到课程，重复内容不会再次添加'); }}><Save size={14} />保存到课程</button></div><div className="episode-navigation"><button disabled={lessonIndex <= 0} onClick={() => goEpisode(-1)}><ChevronLeft size={15} />上一集</button><span>{lessonIndex >= 0 ? `${lessonIndex + 1} / ${selectedCourse.lessons.length}` : '未加入课程'}</span><button disabled={lessonIndex < 0 || lessonIndex >= selectedCourse.lessons.length - 1} onClick={() => goEpisode(1)}>下一集<ChevronRight size={15} /></button></div></div></div>
@@ -158,7 +151,7 @@ export default function PlayerPage() {
         </div>
         <div className="transport"><button className="play-button" onClick={togglePlay} aria-label={isPlaying ? '暂停' : '播放'}>{isPlaying ? <Pause fill="currentColor" /> : <Play fill="currentColor" />}</button><span className="timecode">{formatTime(currentTime)} / {formatTime(duration || manifest.lesson.duration || 0)}</span><input className="timeline" type="range" min="0" max={duration || manifest.lesson.duration || 0} step="0.1" value={currentTime} onChange={(event) => { const time = Number(event.target.value); if (videoRef.current) videoRef.current.currentTime = time; setCurrentTime(time); }} aria-label="播放进度" /><Volume2 className="volume-icon" size={16} /><input className="volume" type="range" min="0" max="1" step=".05" value={volume} onChange={(event) => { const value = Number(event.target.value); setVolume(value); if (videoRef.current) videoRef.current.volume = value; }} aria-label="音量" /><button className="speed-button" onClick={() => { const values = [.75, 1, 1.25, 1.5, 2]; const next = values[(values.indexOf(speed) + 1) % values.length]; setSpeed(next); if (videoRef.current) videoRef.current.playbackRate = next; }}>{speed}×</button><button className="icon-button" onClick={() => void updateSettings({ videoHidden: !videoHidden })} aria-label={videoHidden ? '显示视频' : '隐藏视频'}>{videoHidden ? <Eye /> : <EyeOff />}</button><button className="icon-button" onClick={() => videoRef.current?.requestFullscreen()} aria-label="全屏"><Maximize /></button></div>
         <div className="study-bar"><label className="mode-toggle"><input type="checkbox" checked={studyMode} onChange={(event) => { setStudyMode(event.target.checked); setPhase('idle'); }} /><span className="toggle-track"><span /></span><span><strong>学习模式</strong><small>听一句 · 复述 · 再听</small></span></label><div className="wait-setting"><span>复述时间</span><button onClick={() => void updateSettings({ waitSeconds: Math.max(1, waitSeconds - 1) })}>−</button><strong>{waitSeconds}s</strong><button onClick={() => void updateSettings({ waitSeconds: Math.min(15, waitSeconds + 1) })}>+</button></div><div className="study-actions"><button className="secondary-button" disabled={activeIndex <= 0} onClick={() => playCue(activeIndex - 1)}><RotateCcw size={14} />上一句</button><button className="next-button" disabled={activeIndex >= manifest.cues.length - 1} onClick={() => playCue(activeIndex + 1)}><SkipForward size={14} />下一句</button></div></div>
-        <div className="current-sentence"><div className="sentence-kicker"><Languages size={14} />当前句 · {activeIndex + 1}/{manifest.cues.length} · {translationLabel}</div><div className="sentence-grid"><div className="sentence-en"><p>{cue?.en || '本集没有可用的英文字幕'}</p></div><div className="sentence-zh"><p>{cue?.zh || '本句中文翻译尚未生成'}</p></div></div>{manifest.lesson.translationStatus === 'failed' && <button className="translation-retry" onClick={async () => { await api(`/api/lessons/${lessonId}/translations`, { method: 'POST' }); if (activeLessonRef.current === lessonId) await loadLesson(lessonId); }}>重新翻译</button>}</div>
+        <div className="current-sentence"><div className="sentence-kicker"><Languages size={14} />当前句 · {activeIndex + 1}/{manifest.cues.length} · {translationLabel}</div><div className="sentence-grid"><div className="sentence-en"><p>{cue?.en || '本集没有可用的英文字幕'}</p></div><div className="sentence-zh">{cue?.zh ? <p>{cue.zh}</p> : cue && <button className="translate-cue-button" disabled={translatingCueIds.has(cue.id)} onClick={() => void translateSentence(cue.id)}>{translatingCueIds.has(cue.id) ? <LoaderCircle className="spin" /> : <Languages />}{translatingCueIds.has(cue.id) ? '正在翻译本句' : '翻译本句'}</button>}</div></div></div>
       </section>
     </main>;
 }

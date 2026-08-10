@@ -11,7 +11,7 @@ const lesson = (id: string, title: string, cueCount: number, translationStatus: 
 
 const manifest = (id: string, title: string, text: string, zh: string, cueCount: number, translationStatus: 'idle' | 'running' | 'ready' | 'failed' = 'ready') => ({
   lesson: lesson(id, title, cueCount, translationStatus),
-  cues: Array.from({ length: cueCount }, (_, index) => ({ id: `cue-${index + 1}`, start: index, end: index + .8, en: index ? `${text} ${index + 1}` : text, zh: index ? `${zh} ${index + 1}` : zh })),
+  cues: Array.from({ length: cueCount }, (_, index) => ({ id: `cue-${index + 1}`, start: index, end: index + .8, en: index ? `${text} ${index + 1}` : text, zh: zh ? (index ? `${zh} ${index + 1}` : zh) : null })),
   captionSource: 'llm', progress: { playbackSeconds: 0, sessionSeconds: 0, positionSeconds: 0, activeCue: 0, completedCueIds: [] },
   playback: null,
 });
@@ -35,7 +35,7 @@ test('late subtitle response cannot overwrite the newly selected lesson', async 
   }, secondId);
 
   await expect(page.getByRole('heading', { name: 'Current lesson' })).toBeVisible();
-  await expect(page.getByText('当前句 · 1/3 · AI 已缓存')).toBeVisible();
+  await expect(page.getByText('当前句 · 1/3 · 3 条已缓存 · 按需')).toBeVisible();
   await expect(page.getByText('CURRENT ENGLISH', { exact: true })).toHaveCount(2);
   await expect(page.getByText('OLD ENGLISH MUST DISAPPEAR')).toHaveCount(0);
   await expect(page.getByText('旧字幕不得出现')).toHaveCount(0);
@@ -48,29 +48,34 @@ test('late subtitle response cannot overwrite the newly selected lesson', async 
   expect(video!.height).toBeLessThanOrEqual(230);
 });
 
-test('an in-flight translation poll from the old lesson is cancelled on next episode', async ({ page }) => {
-  const course = { id: 'course', name: 'Regression course', createdAt: Date.now(), updatedAt: Date.now(), lessons: [lesson(firstId, 'Polling old lesson', 2, 'running'), lesson(secondId, 'Current lesson', 3)] };
-  let oldLessonRequests = 0;
+test('translation is requested only after clicking a specific cue', async ({ page }) => {
+  const course = { id: 'course', name: 'Regression course', createdAt: Date.now(), updatedAt: Date.now(), lessons: [lesson(firstId, 'On-demand lesson', 2, 'idle'), lesson(secondId, 'Current lesson', 3)] };
+  let translationRequests = 0;
   await page.route('**/api/bootstrap', (route) => route.fulfill({ json: { courses: [course], vocabulary: [], settings: { selectedCourseId: 'course', localStorageMigrated: true }, stats: { playbackSeconds: 0, sessionSeconds: 0, learnedLessons: 0 }, migrationVersion: 1 } }));
   await page.route('**/api/settings', (route) => route.fulfill({ json: {} }));
   await page.route('**/api/lessons/*/progress', (route) => route.fulfill({ json: {} }));
-  await page.route(`**/api/lessons/${firstId}/refresh`, (route) => route.fulfill({ json: manifest(firstId, 'Polling old lesson', 'OLD POLLING SUBTITLE', '旧轮询字幕', 2, 'running') }));
+  await page.route(`**/api/lessons/${firstId}/refresh`, (route) => route.fulfill({ json: manifest(firstId, 'On-demand lesson', 'ON DEMAND ENGLISH', '', 2, 'idle') }));
   await page.route(`**/api/lessons/${secondId}/refresh`, (route) => route.fulfill({ json: manifest(secondId, 'Current lesson', 'CURRENT ENGLISH', '当前中文字幕', 3) }));
-  await page.route(`**/api/lessons/${firstId}`, async (route) => {
-    oldLessonRequests += 1;
-    if (oldLessonRequests > 1) await new Promise((resolve) => setTimeout(resolve, 700));
-    await route.fulfill({ json: manifest(firstId, 'Polling old lesson', 'OLD POLLING SUBTITLE', '旧轮询字幕', 2, 'running') });
-  });
+  await page.route(`**/api/lessons/${firstId}`, (route) => route.fulfill({ json: manifest(firstId, 'On-demand lesson', 'ON DEMAND ENGLISH', '', 2, 'idle') }));
   await page.route(`**/api/lessons/${secondId}`, (route) => route.fulfill({ json: manifest(secondId, 'Current lesson', 'CURRENT ENGLISH', '当前中文字幕', 3) }));
+  await page.route(`**/api/lessons/${firstId}/translations/cue-1`, (route) => {
+    translationRequests += 1;
+    const translated = manifest(firstId, 'On-demand lesson', 'ON DEMAND ENGLISH', '', 2, 'idle');
+    translated.cues[0].zh = '按需翻译成功';
+    return route.fulfill({ json: translated });
+  });
 
   await page.goto(`/learn/${firstId}`);
-  await expect(page.getByRole('heading', { name: 'Polling old lesson' })).toBeVisible();
-  await expect.poll(() => oldLessonRequests, { timeout: 5_000 }).toBeGreaterThan(1);
+  await expect(page.getByRole('heading', { name: 'On-demand lesson' })).toBeVisible();
+  await page.waitForTimeout(2_100);
+  expect(translationRequests).toBe(0);
+  await page.locator('.cue-row').first().getByRole('button', { name: '翻译本句' }).click();
+  await expect(page.getByText('按需翻译成功', { exact: true })).toHaveCount(2);
+  expect(translationRequests).toBe(1);
   await page.getByRole('button', { name: '下一集' }).click();
 
   await expect(page.getByRole('heading', { name: 'Current lesson' })).toBeVisible();
-  await page.waitForTimeout(900);
   await expect(page.getByText('CURRENT ENGLISH', { exact: true })).toHaveCount(2);
-  await expect(page.getByText('OLD POLLING SUBTITLE')).toHaveCount(0);
-  await expect(page.getByText('旧轮询字幕')).toHaveCount(0);
+  await expect(page.getByText('ON DEMAND ENGLISH')).toHaveCount(0);
+  expect(translationRequests).toBe(1);
 });

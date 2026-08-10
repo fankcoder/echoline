@@ -29,4 +29,21 @@ describe('local production API', () => {
     expect(response.statusCode).toBe(403);
     expect(response.json().error.code).toBe('ORIGIN_REJECTED');
   });
+
+  it('returns a cached translation for only the requested cue', async () => {
+    const db = new EchoDatabase(':memory:'); app = await buildApp({ database: db });
+    const lesson = db.upsertPendingLesson('https://learn.deeplearning.ai/course/lesson/on-demand');
+    db.saveResolvedLesson({ id: lesson.id, sourceUrl: lesson.sourceUrl, title: 'On demand', hash: 'cue-hash', cues: [
+      { id: 'cue-1', start: 0, end: 1, en: 'First sentence.' },
+      { id: 'cue-2', start: 1, end: 2, en: 'Second sentence.' },
+    ] });
+    db.saveTranslations(lesson.id, 'cue-hash', [{ id: 'cue-1', text: '第一句。' }], 'test', 'test', 'v1');
+
+    const response = await app.inject({ method: 'POST', url: `/api/lessons/${lesson.id}/translations/cue-1` });
+    expect(response.statusCode).toBe(200);
+    expect(response.json().cues).toEqual([
+      expect.objectContaining({ id: 'cue-1', zh: '第一句。' }),
+      expect.objectContaining({ id: 'cue-2', zh: null }),
+    ]);
+  });
 });

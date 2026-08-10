@@ -1,4 +1,4 @@
-import { Bookmark, BookmarkCheck, BookOpen, BrainCircuit, Library, Play, Search, Sparkles } from 'lucide-react';
+import { Bookmark, BookmarkCheck, BookOpen, BrainCircuit, Languages, Library, LoaderCircle, Play, Search, Sparkles } from 'lucide-react';
 import { useMemo } from 'react';
 import type { Cue, DictionaryEntry, VocabularyItem } from '../types';
 
@@ -21,7 +21,7 @@ type Props = {
   dictionary: DictionaryEntry | null; dictionaryLoading: boolean; inspectedWord: string;
   tooltip: { x: number; y: number; above: boolean } | null;
   onWordHover: (word: string, rect: DOMRect) => void; onWordLeave: () => void; onWordToggle: (word: string) => void;
-  onReview: () => void; translationLabel: string;
+  onTranslate: (cueId: string) => void; translatingCueIds: Set<string>; onReview: () => void; translationLabel: string;
 };
 
 export function TranscriptPanel(props: Props) {
@@ -42,7 +42,7 @@ export function TranscriptPanel(props: Props) {
         {filtered.map(({ cue, index }) => <article className={`cue-row ${index === props.activeIndex ? 'active' : ''}`} key={cue.id} onClick={() => props.onCue(index)}>
           <button className="cue-time cue-play-button" onClick={(event) => { event.stopPropagation(); props.onCue(index); }} title="播放这一句" aria-label={`播放 ${formatTime(cue.start)} 的句子`}><Play size={11} fill="currentColor" />{formatTime(cue.start)}</button>
           <span className="cue-en"><WordText text={cue.en} saved={saved} onHover={props.onWordHover} onLeave={props.onWordLeave} onToggle={props.onWordToggle} /></span>
-          <span className={`cue-zh ${cue.zh ? '' : 'translation-pending'}`}>{cue.zh || '本句中文翻译尚未生成'}</span>
+          <span className={`cue-zh ${cue.zh ? '' : 'translation-pending'}`}>{cue.zh || <button className="translate-cue-button" disabled={props.translatingCueIds.has(cue.id)} onClick={(event) => { event.stopPropagation(); props.onTranslate(cue.id); }}>{props.translatingCueIds.has(cue.id) ? <LoaderCircle className="spin" /> : <Languages />}{props.translatingCueIds.has(cue.id) ? '正在翻译' : '翻译本句'}</button>}</span>
           {index === props.activeIndex && <span className="playing-bars" aria-hidden="true"><i /><i /><i /></span>}
         </article>)}
         {!filtered.length && <div className="empty-course compact"><Search /><strong>没有匹配的字幕</strong></div>}
