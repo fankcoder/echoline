@@ -6,7 +6,7 @@ import { EchoDatabase } from './db.js';
 import { lookupWord } from './dictionary.js';
 import { resolveLessonAssets, RESOLVER_VERSION } from './resolver.js';
 import { translateCue } from './translation.js';
-import { addLessonSchema, createCourseSchema, progressSchema, reorderSchema, resolveLessonSchema, settingsSchema, updateCourseSchema, vocabularySchema } from './types.js';
+import { addLessonSchema, createCourseSchema, phraseSchema, phraseUpdateSchema, progressSchema, reorderSchema, resolveLessonSchema, settingsSchema, updateCourseSchema, vocabularySchema } from './types.js';
 
 type PlaybackAsset = { mediaUrl: string; resolvedAt: number; resolverVersion: string };
 const playbackAssets = new Map<string, PlaybackAsset>();
@@ -58,7 +58,7 @@ export async function buildApp(options: { database?: EchoDatabase; production?: 
     const courses = db.listCourses(); const vocabulary = db.listVocabulary(); const settings = db.getSettings();
     const statsRows = db.db.prepare('SELECT * FROM study_progress').all() as any[];
     const stats = { playbackSeconds: statsRows.reduce((sum, row) => sum + row.playback_seconds, 0), sessionSeconds: statsRows.reduce((sum, row) => sum + row.session_seconds, 0), learnedLessons: statsRows.filter((row) => JSON.parse(row.completed_cue_ids).length > 0).length };
-    return { courses, vocabulary, settings, stats, migrationVersion: 1 };
+    return { courses, vocabulary, settings, stats, migrationVersion: 2 };
   });
 
   app.post('/api/lessons/resolve', async (request, reply) => {
@@ -128,7 +128,11 @@ export async function buildApp(options: { database?: EchoDatabase; production?: 
   app.patch('/api/settings', async (request) => { const values = settingsSchema.parse(request.body); db.saveSettings(values); return db.getSettings(); });
   app.get('/api/vocabulary', async () => db.listVocabulary());
   app.post('/api/vocabulary/toggle', async (request) => { const input = vocabularySchema.parse(request.body); return { saved: db.toggleVocabulary(input.word, input.lessonId, input.cueId), vocabulary: db.listVocabulary() }; });
-  app.post('/api/review/:group', async (request) => { const { group } = z.object({ group: z.coerce.number().int().min(0) }).parse(request.params); const words = z.object({ words: z.array(z.string()).max(10) }).parse(request.body).words; db.recordReview(group, words); return { ok: true, vocabulary: db.listVocabulary() }; });
+  app.get('/api/phrases', async () => db.listVocabulary().filter((item) => item.kind === 'phrase'));
+  app.post('/api/phrases', async (request) => { const input = phraseSchema.parse(request.body); return db.addPhrase(input.phrase, input.meaning, input.note, input.example, input.lessonId, input.cueId); });
+  app.patch('/api/phrases/:text', async (request, reply) => { const { text } = z.object({ text: z.string().min(2).max(160) }).parse(request.params); const input = phraseUpdateSchema.parse(request.body); const result = db.updatePhrase(text, input.phrase, input.meaning, input.note, input.example); if (result === 'not_found') return reply.code(404).send({ error: { code: 'PHRASE_NOT_FOUND', message: '短语不存在' } }); if (result === 'duplicate') return reply.code(409).send({ error: { code: 'PHRASE_EXISTS', message: '短语已存在' } }); return { ok: true, vocabulary: db.listVocabulary() }; });
+  app.delete('/api/phrases/:text', async (request, reply) => { const { text } = z.object({ text: z.string().min(2).max(160) }).parse(request.params); if (!db.removePhrase(text)) return reply.code(404).send({ error: { code: 'PHRASE_NOT_FOUND', message: '短语不存在' } }); reply.send({ ok: true, vocabulary: db.listVocabulary() }); });
+  app.post('/api/review/:group', async (request) => { const { group } = z.object({ group: z.coerce.number().int().min(0) }).parse(request.params); const input = z.object({ items: z.array(z.object({ word: z.string().min(1), kind: z.string().optional() })).max(10).optional(), words: z.array(z.string()).max(10).optional() }).parse(request.body); const items = input.items || (input.words || []).map((word) => ({ word, kind: 'word' })); db.recordReview(group, items); return { ok: true, vocabulary: db.listVocabulary() }; });
   app.get('/api/dictionary/:word', async (request, reply) => {
     const { word } = z.object({ word: z.string().min(1).max(80) }).parse(request.params);
     try { reply.send(await lookupWord(db, word)); } catch (error) { reply.code(404).send({ error: { code: 'WORD_NOT_FOUND', message: errorMessage(error) } }); }
@@ -136,7 +140,7 @@ export async function buildApp(options: { database?: EchoDatabase; production?: 
 
   app.get('/api/export', async (_request, reply) => reply.header('Content-Disposition', `attachment; filename="echoline-${new Date().toISOString().slice(0,10)}.json"`).send(db.exportData()));
   app.post('/api/import', async (request) => {
-    const input = z.object({ version: z.literal(1), courses: z.array(z.any()), progress: z.array(z.any()).default([]), vocabulary: z.array(z.any()).default([]), settings: z.record(z.any()).default({}) }).parse(request.body);
+    const input = z.object({ version: z.union([z.literal(1), z.literal(2)]), courses: z.array(z.any()), progress: z.array(z.any()).default([]), vocabulary: z.array(z.any()).default([]), settings: z.record(z.any()).default({}) }).parse(request.body);
     const lessonMap = new Map<string, string>();
     for (const importedCourse of input.courses) {
       if (!importedCourse?.name) continue;
@@ -150,7 +154,11 @@ export async function buildApp(options: { database?: EchoDatabase; production?: 
     }
     for (const item of input.progress) { const lessonId = lessonMap.get(item.lessonId); if (lessonId) db.saveProgress(lessonId, item); }
     const existingWords = new Set(db.listVocabulary().map((item) => item.word));
-    for (const item of input.vocabulary) if (item?.word && !existingWords.has(item.word)) db.toggleVocabulary(item.word, lessonMap.get(item.lessonId) || null, item.cueId);
+    for (const item of input.vocabulary) {
+      if (!item?.word || existingWords.has(item.word)) continue;
+      if (item.kind === 'phrase' && item.meaning) db.addPhrase(item.text || item.word, item.meaning, item.note, item.example, lessonMap.get(item.lessonId) || null, item.cueId);
+      else db.toggleVocabulary(item.word, lessonMap.get(item.lessonId) || null, item.cueId);
+    }
     db.saveSettings(input.settings);
     return { ok: true, importedCourses: input.courses.length, pendingResolution: lessonMap.size };
   });

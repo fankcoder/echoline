@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test';
+import type { VocabularyItem } from '../src/types';
 
 const firstId = '11111111-1111-4111-8111-111111111111';
 const secondId = '22222222-2222-4222-8222-222222222222';
@@ -89,4 +90,39 @@ test('translation is requested only after clicking a specific cue', async ({ pag
   await expect(page.getByText('CURRENT ENGLISH', { exact: true })).toHaveCount(2);
   await expect(page.getByText('ON DEMAND ENGLISH')).toHaveCount(0);
   expect(translationRequests).toBe(1);
+});
+
+test('selected subtitle phrase can be saved with a manual meaning', async ({ page }) => {
+  const course = { id: 'course', name: 'Phrase course', createdAt: Date.now(), updatedAt: Date.now(), lessons: [lesson(firstId, 'Phrase lesson', 1, 'idle')] };
+  let vocabulary: VocabularyItem[] = [];
+  await page.route('**/api/bootstrap', (route) => route.fulfill({ json: { courses: [course], vocabulary, settings: { selectedCourseId: 'course', localStorageMigrated: true }, stats: { playbackSeconds: 0, sessionSeconds: 0, learnedLessons: 0 }, migrationVersion: 2 } }));
+  await page.route('**/api/settings', (route) => route.fulfill({ json: {} }));
+  await page.route('**/api/lessons/*/progress', (route) => route.fulfill({ json: {} }));
+  await page.route(`**/api/lessons/${firstId}/refresh`, (route) => route.fulfill({ json: manifest(firstId, 'Phrase lesson', 'People are at the cutting edge of AI usage.', '', 1, 'idle') }));
+  await page.route(`**/api/lessons/${firstId}`, (route) => route.fulfill({ json: manifest(firstId, 'Phrase lesson', 'People are at the cutting edge of AI usage.', '', 1, 'idle') }));
+  await page.route('**/api/phrases', async (route) => {
+    const input = route.request().postDataJSON() as { phrase: string; meaning: string; note?: string; example?: string; lessonId?: string; cueId?: string };
+    vocabulary = [{ word: input.phrase.toLowerCase(), text: input.phrase, kind: 'phrase', meaning: input.meaning, note: input.note || '', example: input.example || '', lessonId: input.lessonId || null, cueId: input.cueId || null, addedAt: Date.now(), reviewCount: 0, lastReviewedAt: null, groupIndex: 0 }];
+    await route.fulfill({ json: { saved: true, item: vocabulary[0] } });
+  });
+
+  await page.goto(`/learn/${firstId}`);
+  await expect(page.getByRole('heading', { name: 'Phrase lesson' })).toBeVisible();
+  await page.evaluate(() => {
+    const container = document.querySelector('.cue-en');
+    if (!container) throw new Error('English subtitle not found');
+    const nodes: Text[] = []; const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT);
+    for (let node = walker.nextNode(); node; node = walker.nextNode()) nodes.push(node as Text);
+    const start = nodes.find((node) => node.textContent === 'at'); const end = nodes.find((node) => node.textContent === 'edge');
+    if (!start || !end) throw new Error('Phrase words not found');
+    const range = document.createRange(); range.setStart(start, 0); range.setEnd(end, end.textContent?.length || 0);
+    const selection = window.getSelection(); selection?.removeAllRanges(); selection?.addRange(range);
+    container.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
+  });
+  await expect(page.getByRole('dialog', { name: '添加短语' })).toBeVisible();
+  await page.getByLabel('中文释义').fill('处于前沿；最先进');
+  await page.getByRole('button', { name: '保存短语' }).click();
+  await expect(page.locator('.phrase-saved')).toHaveText('at the cutting edge');
+  await page.locator('.phrase-saved').hover();
+  await expect(page.getByText('处于前沿；最先进')).toBeVisible();
 });

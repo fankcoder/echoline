@@ -43,7 +43,9 @@ CREATE TABLE IF NOT EXISTS study_progress (
   completed_cue_ids TEXT NOT NULL DEFAULT '[]', last_studied_at INTEGER, updated_at INTEGER NOT NULL
 );
 CREATE TABLE IF NOT EXISTS vocabulary (
-  word TEXT PRIMARY KEY, lesson_id TEXT, cue_id TEXT, added_at INTEGER NOT NULL,
+  word TEXT PRIMARY KEY, kind TEXT NOT NULL DEFAULT 'word', display_text TEXT, normalized_text TEXT,
+  meaning TEXT NOT NULL DEFAULT '', note TEXT NOT NULL DEFAULT '', example TEXT NOT NULL DEFAULT '',
+  lesson_id TEXT, cue_id TEXT, added_at INTEGER NOT NULL,
   review_count INTEGER NOT NULL DEFAULT 0, last_reviewed_at INTEGER
 );
 CREATE TABLE IF NOT EXISTS dictionary_cache (
@@ -75,9 +77,21 @@ export class EchoDatabase {
     if (filename !== ':memory:') mkdirSync(dirname(filename), { recursive: true });
     this.db = new DatabaseSync(filename);
     this.db.exec(schema);
+    this.migrate();
     this.seed();
     const lessons = this.db.prepare('SELECT id FROM lessons').all() as Array<{ id: string }>;
     lessons.forEach(({ id }) => this.updateTranslationCoverage(id));
+  }
+
+  private migrate() {
+    const columns = new Set((this.db.prepare('PRAGMA table_info(vocabulary)').all() as Array<{ name: string }>).map((column) => column.name));
+    const additions: Array<[string, string]> = [
+      ['kind', "TEXT NOT NULL DEFAULT 'word'"], ['display_text', 'TEXT'], ['normalized_text', 'TEXT'],
+      ['meaning', "TEXT NOT NULL DEFAULT ''"], ['note', "TEXT NOT NULL DEFAULT ''"], ['example', "TEXT NOT NULL DEFAULT ''"],
+    ];
+    additions.forEach(([name, definition]) => { if (!columns.has(name)) this.db.exec(`ALTER TABLE vocabulary ADD COLUMN ${name} ${definition}`); });
+    this.db.exec("UPDATE vocabulary SET display_text=COALESCE(display_text,word), normalized_text=COALESCE(normalized_text,word), kind=COALESCE(kind,'word')");
+    this.db.prepare('UPDATE schema_meta SET version=2').run();
   }
 
   private seed() {
@@ -241,22 +255,49 @@ export class EchoDatabase {
   }
 
   listVocabulary() {
-    return (this.db.prepare('SELECT * FROM vocabulary ORDER BY added_at').all() as any[]).map((row, index) => ({ word: row.word, lessonId: row.lesson_id, cueId: row.cue_id, addedAt: row.added_at, reviewCount: row.review_count, lastReviewedAt: row.last_reviewed_at, groupIndex: Math.floor(index / 10) }));
+    return (this.db.prepare('SELECT * FROM vocabulary ORDER BY added_at, word').all() as any[]).map((row, index) => ({ word: row.word, text: row.display_text || row.word, kind: row.kind || 'word', meaning: row.meaning || '', note: row.note || '', example: row.example || '', lessonId: row.lesson_id, cueId: row.cue_id, addedAt: row.added_at, reviewCount: row.review_count, lastReviewedAt: row.last_reviewed_at, groupIndex: Math.floor(index / 10) }));
   }
 
   toggleVocabulary(word: string, lessonId?: string | null, cueId?: string | null): boolean {
-    const normalized = word.toLowerCase();
+    const normalized = word.toLowerCase().trim();
     if (this.db.prepare('SELECT word FROM vocabulary WHERE word=?').get(normalized)) { this.db.prepare('DELETE FROM vocabulary WHERE word=?').run(normalized); return false; }
-    this.db.prepare('INSERT INTO vocabulary(word,lesson_id,cue_id,added_at) VALUES(?,?,?,?)').run(normalized, lessonId || null, cueId || null, Date.now());
+    this.db.prepare('INSERT INTO vocabulary(word,kind,display_text,normalized_text,lesson_id,cue_id,added_at) VALUES(?,?,?,?,?,?,?)').run(normalized, 'word', normalized, normalized, lessonId || null, cueId || null, Date.now());
     return true;
   }
 
-  recordReview(groupIndex: number, words: string[]) {
+  addPhrase(text: string, meaning: string, note = '', example = '', lessonId?: string | null, cueId?: string | null) {
+    const displayText = text.replace(/\s+/g, ' ').trim(); const normalized = displayText.toLowerCase();
+    const existing = this.db.prepare('SELECT * FROM vocabulary WHERE word=?').get(normalized) as any;
+    if (existing) {
+      if (existing.kind !== 'phrase') throw new Error('这个内容已经在生词本中');
+      this.db.prepare('UPDATE vocabulary SET meaning=?,note=?,example=? WHERE word=?').run(meaning.trim(), note.trim(), example.trim(), normalized);
+      return { saved: false, item: this.listVocabulary().find((item) => item.word === normalized) };
+    }
+    this.db.prepare('INSERT INTO vocabulary(word,kind,display_text,normalized_text,meaning,note,example,lesson_id,cue_id,added_at) VALUES(?,?,?,?,?,?,?,?,?,?)')
+      .run(normalized, 'phrase', displayText, normalized, meaning.trim(), note.trim(), example.trim(), lessonId || null, cueId || null, Date.now());
+    return { saved: true, item: this.listVocabulary().find((item) => item.word === normalized) };
+  }
+
+  updatePhrase(normalizedText: string, text: string, meaning: string, note = '', example = '') {
+    const normalized = normalizedText.toLowerCase().replace(/\s+/g, ' ').trim(); const displayText = text.replace(/\s+/g, ' ').trim(); const nextNormalized = displayText.toLowerCase();
+    const row = this.db.prepare('SELECT kind FROM vocabulary WHERE word=?').get(normalized) as { kind: string } | undefined;
+    if (!row || row.kind !== 'phrase') return 'not_found';
+    if (nextNormalized !== normalized && this.db.prepare('SELECT word FROM vocabulary WHERE word=?').get(nextNormalized)) return 'duplicate';
+    this.db.prepare('UPDATE vocabulary SET word=?,display_text=?,normalized_text=?,meaning=?,note=?,example=? WHERE word=?').run(nextNormalized, displayText, nextNormalized, meaning.trim(), note.trim(), example.trim(), normalized);
+    return 'updated';
+  }
+
+  removePhrase(normalizedText: string) {
+    const normalized = normalizedText.toLowerCase().replace(/\s+/g, ' ').trim();
+    return this.db.prepare("DELETE FROM vocabulary WHERE word=? AND kind='phrase'").run(normalized).changes > 0;
+  }
+
+  recordReview(groupIndex: number, items: Array<{ word: string; kind?: string }>) {
     const now = Date.now();
     this.transaction(() => {
-      this.db.prepare('INSERT INTO review_records(id,group_index,words,reviewed_at) VALUES(?,?,?,?)').run(randomUUID(), groupIndex, JSON.stringify(words), now);
+      this.db.prepare('INSERT INTO review_records(id,group_index,words,reviewed_at) VALUES(?,?,?,?)').run(randomUUID(), groupIndex, JSON.stringify(items), now);
       const update = this.db.prepare('UPDATE vocabulary SET review_count=review_count+1,last_reviewed_at=? WHERE word=?');
-      words.forEach((word) => update.run(now, word));
+      items.forEach((item) => update.run(now, item.word.toLowerCase().trim()));
     });
   }
 
@@ -278,7 +319,7 @@ export class EchoDatabase {
   exportData() {
     const courses = this.listCourses();
     const lessonIds = [...new Set(courses.flatMap((course) => course.lessons.map((lesson) => lesson.id)))];
-    return { version: 1, exportedAt: Date.now(), courses, progress: lessonIds.map((lessonId) => ({ lessonId, ...this.getProgress(lessonId) })), vocabulary: this.listVocabulary(), settings: this.getSettings() };
+    return { version: 2, exportedAt: Date.now(), courses, progress: lessonIds.map((lessonId) => ({ lessonId, ...this.getProgress(lessonId) })), vocabulary: this.listVocabulary(), settings: this.getSettings() };
   }
 
   private toPublicLesson(row: any): PublicLesson {

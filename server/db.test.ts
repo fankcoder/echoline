@@ -1,4 +1,8 @@
 import { randomUUID } from 'node:crypto';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import { describe, expect, it } from 'vitest';
 import { EchoDatabase, canonicalizeUrl } from './db.js';
 
@@ -44,5 +48,29 @@ describe('EchoDatabase', () => {
     db.saveSettings({ repeatCount: 9 });
     expect(db.getSettings().repeatCount).toBe(9);
     db.close();
+  });
+
+  it('stores phrase meaning and deduplicates normalized text', () => {
+    const db = new EchoDatabase(':memory:');
+    const lessonId = db.upsertPendingLesson('https://learn.deeplearning.ai/course/lesson/phrase-db').id;
+    db.addPhrase('at   the cutting edge', '处于前沿', '最先进的水平', '', lessonId, 'cue-1');
+    db.addPhrase('AT THE CUTTING EDGE', '最先进');
+    expect(db.listVocabulary()).toMatchObject([{ kind: 'phrase', text: 'at the cutting edge', meaning: '最先进' }]);
+    expect(db.updatePhrase('at the cutting edge', 'on the cutting edge', '处于前沿；最先进')).toBe('updated');
+    expect(db.listVocabulary()[0].meaning).toBe('处于前沿；最先进');
+    expect(db.listVocabulary()[0].word).toBe('on the cutting edge');
+    expect(db.removePhrase('ON THE CUTTING EDGE')).toBe(true);
+    expect(db.listVocabulary()).toHaveLength(0);
+    db.close();
+  });
+
+  it('migrates existing word-only vocabulary without losing records', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'echoline-legacy-')); const filename = join(directory, 'legacy.db');
+    const legacy = new DatabaseSync(filename);
+    legacy.exec("CREATE TABLE vocabulary (word TEXT PRIMARY KEY, lesson_id TEXT, cue_id TEXT, added_at INTEGER NOT NULL, review_count INTEGER NOT NULL DEFAULT 0, last_reviewed_at INTEGER); INSERT INTO vocabulary(word,lesson_id,cue_id,added_at) VALUES('context',NULL,NULL,1);");
+    legacy.close();
+    const db = new EchoDatabase(filename);
+    expect(db.listVocabulary()).toMatchObject([{ word: 'context', text: 'context', kind: 'word', meaning: '' }]);
+    db.close(); rmSync(directory, { recursive: true, force: true });
   });
 });

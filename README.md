@@ -31,6 +31,7 @@ npm start
 - MyMemory 有免费额度限制；额度用完后英文字幕和播放器仍可正常使用，稍后可以再次点击翻译。
 - 首次使用前运行 `npm run dictionary:install`，安装约 77 万词条的 ECDICT 离线英汉词典；默认保存到 `data/dictionaries/ecdict.db`。
 - 查词只使用 ECDICT/内置英汉释义作为中文词义，不再把免费英文接口的英文 definition 当成中文翻译。若显式配置 `DICTIONARY_REMOTE_SUPPLEMENT=true`，Free Dictionary 仅补充发音和英文例句。
+- 在同一句英文字幕中拖选两个或以上单词，即可添加短语并手动确认中文释义；短语会在原句高亮，并与单词一起按每 10 项分组复习。
 
 ECDICT 数据来自 [skywind3000/ECDICT](https://github.com/skywind3000/ECDICT)，按其 MIT License 使用；大型词典数据库只下载到用户本机，不提交到 Git，也不随 EchoLine 重新分发。
 

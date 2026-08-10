@@ -31,6 +31,12 @@ export const vocabularySchema = z.object({
   lessonId: z.string().uuid().nullable().optional(),
   cueId: z.string().nullable().optional(),
 });
+export const phraseSchema = z.object({
+  phrase: z.string().trim().min(2).max(160).refine((value) => value.trim().split(/\s+/).length >= 2, '短语至少包含两个单词'), meaning: z.string().trim().min(1).max(500),
+  note: z.string().trim().max(500).optional(), example: z.string().trim().max(500).optional(),
+  lessonId: z.string().uuid().nullable().optional(), cueId: z.string().max(160).nullable().optional(),
+});
+export const phraseUpdateSchema = phraseSchema.pick({ phrase: true, meaning: true, note: true, example: true });
 
 export type Cue = { id: string; start: number; end: number; en: string; zh: string | null };
 

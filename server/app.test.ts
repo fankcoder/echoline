@@ -11,7 +11,7 @@ describe('local production API', () => {
     app = await buildApp({ database: new EchoDatabase(':memory:') });
     const response = await app.inject({ method: 'GET', url: '/api/bootstrap' });
     expect(response.statusCode).toBe(200);
-    expect(response.json()).toMatchObject({ migrationVersion: 1, courses: [{ id: 'ai-prompting' }] });
+    expect(response.json()).toMatchObject({ migrationVersion: 2, courses: [{ id: 'ai-prompting' }] });
   });
 
   it('supports course CRUD and stable lesson membership', async () => {
@@ -45,5 +45,25 @@ describe('local production API', () => {
       expect.objectContaining({ id: 'cue-1', zh: '第一句。' }),
       expect.objectContaining({ id: 'cue-2', zh: null }),
     ]);
+  });
+
+  it('creates, deduplicates, and reviews phrases with vocabulary items', async () => {
+    const db = new EchoDatabase(':memory:'); app = await buildApp({ database: db });
+    const lessonId = db.upsertPendingLesson('https://learn.deeplearning.ai/course/lesson/phrase').id;
+    const created = await app.inject({ method: 'POST', url: '/api/phrases', payload: { phrase: 'at   the cutting edge', meaning: '处于前沿', lessonId, cueId: 'cue-1' } });
+    expect(created.statusCode).toBe(200);
+    expect(created.json()).toMatchObject({ saved: true, item: { kind: 'phrase', text: 'at the cutting edge', meaning: '处于前沿' } });
+    const duplicate = await app.inject({ method: 'POST', url: '/api/phrases', payload: { phrase: 'AT THE CUTTING EDGE', meaning: '最先进' } });
+    expect(duplicate.statusCode).toBe(200);
+    expect(db.listVocabulary()).toHaveLength(1);
+    const review = await app.inject({ method: 'POST', url: '/api/review/0', payload: { items: [{ word: 'at the cutting edge', kind: 'phrase' }] } });
+    expect(review.statusCode).toBe(200);
+    expect(review.json().vocabulary[0].reviewCount).toBe(1);
+    const updated = await app.inject({ method: 'PATCH', url: '/api/phrases/at%20the%20cutting%20edge', payload: { phrase: 'on the cutting edge', meaning: '站在前沿' } });
+    expect(updated.statusCode).toBe(200);
+    expect(updated.json().vocabulary[0]).toMatchObject({ word: 'on the cutting edge', meaning: '站在前沿' });
+    expect((await app.inject({ method: 'GET', url: '/api/phrases' })).json()).toHaveLength(1);
+    expect((await app.inject({ method: 'DELETE', url: '/api/phrases/on%20the%20cutting%20edge' })).statusCode).toBe(200);
+    expect((await app.inject({ method: 'GET', url: '/api/phrases' })).json()).toHaveLength(0);
   });
 });
