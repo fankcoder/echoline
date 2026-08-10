@@ -1,28 +1,41 @@
-import { describe, expect, it } from 'vitest';
-import { __testing } from './translation.js';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { EchoDatabase } from './db.js';
+import { __testing, translateCue } from './translation.js';
 
-describe('translation protocol compatibility', () => {
-  it('prefers Responses for GPT-5 family models', () => {
-    expect(__testing.protocols('gpt-5.5', 'auto')).toEqual(['responses', 'chat-completions']);
-    expect(__testing.protocols('gpt-4.1-mini', 'auto')).toEqual(['chat-completions', 'responses']);
-    expect(__testing.protocols('custom-model', 'responses')).toEqual(['responses']);
+afterEach(() => {
+  vi.unstubAllGlobals();
+  delete process.env.TRANSLATION_PROVIDER;
+  delete process.env.TRANSLATION_REQUEST_INTERVAL_MS;
+});
+
+describe('free sentence translation', () => {
+  it('parses MyMemory and LibreTranslate responses', () => {
+    expect(__testing.parseMyMemory({ responseStatus: 200, responseData: { translatedText: '人工智能&amp;机器学习' } })).toBe('人工智能&机器学习');
+    expect(__testing.parseLibre({ translatedText: '技术课程' })).toBe('技术课程');
   });
 
-  it('extracts text from Chat Completions and Responses payloads', () => {
-    expect(__testing.responseText('chat-completions', { choices: [{ message: { content: '[{"id":"cue-1","text":"你好"}]' } }] })).toContain('你好');
-    expect(__testing.responseText('responses', { output: [{ type: 'message', content: [{ type: 'output_text', text: '[{"id":"cue-1","text":"你好"}]' }] }] })).toContain('你好');
+  it('reports exhausted MyMemory quota', () => {
+    expect(() => __testing.parseMyMemory({ responseStatus: 403, quotaFinished: true, responseDetails: 'DAILY LIMIT', responseData: { translatedText: '' } })).toThrow('DAILY LIMIT');
   });
 
-  it('recognizes provider protocol errors and keeps their useful message', () => {
-    const error = __testing.apiError(400, 'chat-completions', JSON.stringify({ error: { code: 'protocol_not_supported', message: '模型不支持 chat completions 协议' } }));
-    expect(__testing.unsupportedProtocol(error)).toBe(true);
-    expect(error.message).toContain('模型不支持 chat completions 协议');
-  });
+  it('translates and caches only the selected cue without an API key', async () => {
+    process.env.TRANSLATION_PROVIDER = 'mymemory'; process.env.TRANSLATION_REQUEST_INTERVAL_MS = '0';
+    const request = vi.fn().mockResolvedValue(new Response(JSON.stringify({ responseStatus: 200, responseData: { translatedText: '第一句。' } }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+    vi.stubGlobal('fetch', request);
+    const db = new EchoDatabase(':memory:');
+    const lesson = db.upsertPendingLesson('https://learn.deeplearning.ai/course/lesson/free-translation');
+    db.saveResolvedLesson({ id: lesson.id, sourceUrl: lesson.sourceUrl, title: 'Free', hash: 'free-hash', cues: [
+      { id: 'cue-1', start: 0, end: 1, en: 'First sentence.' },
+      { id: 'cue-2', start: 1, end: 2, en: 'Second sentence.' },
+    ] });
 
-  it('splits an unusually long cue at clause boundaries for fallback translation', () => {
-    const parts = __testing.splitLongCue({ id: 'cue-1', en: 'First long clause with context and several technical details, second clause with substantially more background information, and a final clause that completes the sentence for the learner.' });
-    expect(parts.length).toBeGreaterThan(1);
-    expect(parts.map((part) => part.id)).toEqual(parts.map((_, index) => `cue-1__part_${index + 1}`));
-    expect(parts.map((part) => part.en).join(' ')).toContain('final clause');
+    await expect(translateCue(db, lesson.id, 'cue-1')).resolves.toEqual({ id: 'cue-1', text: '第一句。' });
+    await expect(translateCue(db, lesson.id, 'cue-1')).resolves.toEqual({ id: 'cue-1', text: '第一句。' });
+    expect(request).toHaveBeenCalledTimes(1);
+    expect(db.getCues(lesson.id).cues).toEqual([
+      expect.objectContaining({ id: 'cue-1', zh: '第一句。' }),
+      expect.objectContaining({ id: 'cue-2', zh: null }),
+    ]);
+    db.close();
   });
 });

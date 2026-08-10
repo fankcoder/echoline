@@ -24,10 +24,11 @@ npm start
 ## 翻译与词典
 
 - 导入公开课时后，英文字幕立即可用。
-- 有官方中文字幕时直接保存并使用，不调用 LLM。
-- 没有官方中文字幕时，页面不会自动调用 LLM。用户点击某句旁边的“翻译本句”后，才通过 `.env` 中的 OpenAI 兼容接口翻译该句；后端会自动适配 Responses 和 Chat Completions 协议。
-- 单句翻译以英文字幕哈希、模型和提示版本为缓存键保存到 SQLite；重复点击、刷新、切集或重启不会重复计费。
-- 没有配置 `OPENAI_API_KEY` 时只显示英文字幕，并提供明确状态，不影响播放器。
+- 有官方中文字幕时直接保存并使用，不调用外部翻译接口。
+- 没有官方中文字幕时，页面不会自动翻译。用户点击某句旁边的“免费翻译本句”后，才调用 MyMemory 免费接口翻译该句，不使用 LLM，也不需要 OpenAI Key。
+- 如希望翻译内容不发送到公共服务，可自行部署 LibreTranslate，并设置 `TRANSLATION_PROVIDER=libretranslate` 与 `LIBRETRANSLATE_URL`。
+- 单句翻译以英文字幕哈希、翻译提供方和接口版本为缓存键保存到 SQLite；重复点击、刷新、切集或重启不会重复请求。
+- MyMemory 有免费额度限制；额度用完后英文字幕和播放器仍可正常使用，稍后可以再次点击翻译。
 - 首次使用前运行 `npm run dictionary:install`，安装约 77 万词条的 ECDICT 离线英汉词典；默认保存到 `data/dictionaries/ecdict.db`。
 - 查词只使用 ECDICT/内置英汉释义作为中文词义，不再把免费英文接口的英文 definition 当成中文翻译。若显式配置 `DICTIONARY_REMOTE_SUPPLEMENT=true`，Free Dictionary 仅补充发音和英文例句。
 
@@ -40,7 +41,7 @@ ECDICT 数据来自 [skywind3000/ECDICT](https://github.com/skywind3000/ECDICT)�
 本地数据库默认位于 `data/echoline.db`，包含：
 
 - 课程、稳定课时 ID 和集数顺序
-- 每集英文字幕、官方/AI 中文翻译和版本哈希
+- 每集英文字幕、官方/免费接口中文翻译和版本哈希
 - 播放位置、有效播放时间、学习会话时间和完成句子
 - 生词、每 10 个词的复习分组、词典缓存和全局设置
 

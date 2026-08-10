@@ -35,7 +35,7 @@ test('late subtitle response cannot overwrite the newly selected lesson', async 
   }, secondId);
 
   await expect(page.getByRole('heading', { name: 'Current lesson' })).toBeVisible();
-  await expect(page.getByText('当前句 · 1/3 · 3 条已缓存 · 按需')).toBeVisible();
+  await expect(page.getByText('当前句 · 1/3 · 3 条已缓存 · 免费按需')).toBeVisible();
   await expect(page.getByText('CURRENT ENGLISH', { exact: true })).toHaveCount(2);
   await expect(page.getByText('OLD ENGLISH MUST DISAPPEAR')).toHaveCount(0);
   await expect(page.getByText('旧字幕不得出现')).toHaveCount(0);
@@ -69,7 +69,7 @@ test('translation is requested only after clicking a specific cue', async ({ pag
   await expect(page.getByRole('heading', { name: 'On-demand lesson' })).toBeVisible();
   await page.waitForTimeout(2_100);
   expect(translationRequests).toBe(0);
-  await page.locator('.cue-row').first().getByRole('button', { name: '翻译本句' }).click();
+  await page.locator('.cue-row').first().getByRole('button', { name: '免费翻译本句' }).click();
   await expect(page.getByText('按需翻译成功', { exact: true })).toHaveCount(2);
   expect(translationRequests).toBe(1);
   await page.getByRole('button', { name: '下一集' }).click();

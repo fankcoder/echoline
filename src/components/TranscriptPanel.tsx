@@ -42,7 +42,7 @@ export function TranscriptPanel(props: Props) {
         {filtered.map(({ cue, index }) => <article className={`cue-row ${index === props.activeIndex ? 'active' : ''}`} key={cue.id} onClick={() => props.onCue(index)}>
           <button className="cue-time cue-play-button" onClick={(event) => { event.stopPropagation(); props.onCue(index); }} title="播放这一句" aria-label={`播放 ${formatTime(cue.start)} 的句子`}><Play size={11} fill="currentColor" />{formatTime(cue.start)}</button>
           <span className="cue-en"><WordText text={cue.en} saved={saved} onHover={props.onWordHover} onLeave={props.onWordLeave} onToggle={props.onWordToggle} /></span>
-          <span className={`cue-zh ${cue.zh ? '' : 'translation-pending'}`}>{cue.zh || <button className="translate-cue-button" disabled={props.translatingCueIds.has(cue.id)} onClick={(event) => { event.stopPropagation(); props.onTranslate(cue.id); }}>{props.translatingCueIds.has(cue.id) ? <LoaderCircle className="spin" /> : <Languages />}{props.translatingCueIds.has(cue.id) ? '正在翻译' : '翻译本句'}</button>}</span>
+          <span className={`cue-zh ${cue.zh ? '' : 'translation-pending'}`}>{cue.zh || <button className="translate-cue-button" disabled={props.translatingCueIds.has(cue.id)} onClick={(event) => { event.stopPropagation(); props.onTranslate(cue.id); }}>{props.translatingCueIds.has(cue.id) ? <LoaderCircle className="spin" /> : <Languages />}{props.translatingCueIds.has(cue.id) ? '免费翻译中' : '免费翻译本句'}</button>}</span>
           {index === props.activeIndex && <span className="playing-bars" aria-hidden="true"><i /><i /><i /></span>}
         </article>)}
         {!filtered.length && <div className="empty-course compact"><Search /><strong>没有匹配的字幕</strong></div>}
