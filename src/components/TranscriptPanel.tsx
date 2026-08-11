@@ -1,6 +1,7 @@
-import { Bookmark, BookmarkCheck, BookOpen, BrainCircuit, Languages, Library, LoaderCircle, Pencil, Play, Search, Sparkles, Trash2 } from 'lucide-react';
+import { Bookmark, BookmarkCheck, BookOpen, BrainCircuit, Languages, Library, LoaderCircle, Pencil, Play, Search, Sparkles, Trash2, Volume2 } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../api';
+import { getBrowserSpeechAdapter, speakEnglish } from '../speech';
 import type { Cue, DictionaryEntry, DictionarySearchDirection, DictionarySearchResult, VocabularyItem } from '../types';
 
 function normalizeWord(value: string) { return value.toLowerCase().replace(/^[^a-z]+|[^a-z]+$/g, ''); }
@@ -77,14 +78,54 @@ type Props = {
   tooltip: { x: number; y: number; above: boolean } | null;
   onWordHover: (word: string, rect: DOMRect) => void; onWordLeave: () => void; onWordToggle: (word: string) => void;
   onPhraseHover: (phrase: VocabularyItem, rect: DOMRect) => void; onPhraseSelection: (text: string, cueId: string) => void; onPhraseRemove: (phrase: VocabularyItem) => void; onPhraseEdit: (phrase: VocabularyItem) => void;
-  onTranslate: (cueId: string) => void; translatingCueIds: Set<string>; onReview: () => void; translationLabel: string;
+  onTranslate: (cueId: string) => void; translatingCueIds: Set<string>; onReview: () => void; onNotify: (message: string) => void; translationLabel: string;
 };
 
 export function TranscriptPanel(props: Props) {
   const saved = useMemo(() => new Set(props.vocabulary.map((item) => item.word)), [props.vocabulary]);
   const phrases = useMemo(() => props.vocabulary.filter((item) => item.kind === 'phrase'), [props.vocabulary]);
+  const vocabularyMeaningCache = useRef(new Map<string, string>());
+  const [vocabularyMeanings, setVocabularyMeanings] = useState<Record<string, string>>({});
+  const speakingUtterance = useRef<SpeechSynthesisUtterance | null>(null);
+  const [speakingItem, setSpeakingItem] = useState('');
   const inspectedPhrase = props.inspectedPhrase;
   const phraseSelectionRef = useRef(false);
+  useEffect(() => {
+    const missing = props.vocabulary.filter((item) => item.kind === 'word' && !vocabularyMeaningCache.current.has(item.word)).map((item) => item.word);
+    if (!missing.length) return undefined;
+    const controller = new AbortController();
+    void Promise.all(missing.map(async (word) => {
+      try {
+        const entry = await api<DictionaryEntry>(`/api/dictionary/${encodeURIComponent(word)}`, { signal: controller.signal });
+        return [word, entry.meaning || '暂无释义'] as const;
+      } catch (reason) {
+        if ((reason as Error).name === 'AbortError') return null;
+        return [word, '暂无释义'] as const;
+      }
+    })).then((entries) => {
+      if (controller.signal.aborted) return;
+      const next: Record<string, string> = {};
+      entries.forEach((entry) => { if (entry) { vocabularyMeaningCache.current.set(entry[0], entry[1]); next[entry[0]] = entry[1]; } });
+      if (Object.keys(next).length) setVocabularyMeanings((current) => ({ ...current, ...next }));
+    }).catch(() => undefined);
+    return () => controller.abort();
+  }, [props.vocabulary]);
+  useEffect(() => () => {
+    speakingUtterance.current = null;
+    getBrowserSpeechAdapter()?.cancel();
+  }, []);
+  const speakVocabularyItem = (item: VocabularyItem) => {
+    const adapter = getBrowserSpeechAdapter();
+    const text = item.text || item.word;
+    if (!adapter) { props.onNotify('当前浏览器不支持系统朗读'); return; }
+    speakingUtterance.current = null;
+    let utterance: SpeechSynthesisUtterance | null = null;
+    const finish = () => { if (utterance && speakingUtterance.current === utterance) { speakingUtterance.current = null; setSpeakingItem(''); } };
+    utterance = speakEnglish(text, adapter, finish, () => { finish(); props.onNotify('系统朗读未能启动'); });
+    if (!utterance) return;
+    speakingUtterance.current = utterance;
+    setSpeakingItem(item.word);
+  };
   const filtered = useMemo(() => {
     const term = props.query.trim().toLowerCase();
     return props.cues.map((cue, index) => ({ cue, index })).filter(({ cue }) => !term || `${cue.en} ${cue.zh || ''}`.toLowerCase().includes(term));
@@ -121,7 +162,7 @@ export function TranscriptPanel(props: Props) {
     </> : <div className="vocabulary-layout">
       <div className="vocabulary-list">
         <div className="vocab-summary"><strong>{props.vocabulary.length}</strong><span>个学习项 · {Math.ceil(props.vocabulary.length / 10)} 组</span><button onClick={props.onReview} disabled={!props.vocabulary.length}><BrainCircuit size={14} />复习</button></div>
-        {props.vocabulary.map((item) => <button className="vocab-item" key={`${item.kind}-${item.word}`} onClick={() => item.kind === 'phrase' ? props.onPhraseRemove(item) : props.onWordToggle(item.word)}><span><strong>{item.text || item.word}</strong><small>{item.kind === 'phrase' ? `短语 · 第 ${item.groupIndex + 1} 组` : `第 ${item.groupIndex + 1} 组`}</small></span><p>{item.kind === 'phrase' ? item.meaning : `已复习 ${item.reviewCount} 次`}</p><BookmarkCheck size={15} /></button>)}
+        {props.vocabulary.map((item) => <article className="vocab-item" key={`${item.kind}-${item.word}`}><button className={`vocab-speak ${speakingItem === item.word ? 'is-speaking' : ''}`} type="button" onClick={() => speakVocabularyItem(item)} aria-label={`朗读 ${item.text || item.word}`} aria-pressed={speakingItem === item.word}><Volume2 size={14} /><span><strong>{item.text || item.word}</strong><small>{item.kind === 'phrase' ? `短语 · 第 ${item.groupIndex + 1} 组` : `第 ${item.groupIndex + 1} 组`}</small></span></button><p>{item.kind === 'phrase' ? item.meaning : vocabularyMeanings[item.word] || item.meaning || '正在查词…'}</p><small className="vocab-review-meta">已复习 {item.reviewCount} 次</small><button className="vocab-complete" type="button" onClick={() => item.kind === 'phrase' ? props.onPhraseRemove(item) : props.onWordToggle(item.word)} aria-label={`完成 ${item.text || item.word} 并移出生词本`}>完成</button></article>)}
         {!props.vocabulary.length && <div className="empty-review"><Library /><strong>生词本还是空的</strong><span>点击字幕里的单词或拖选短语即可收藏。</span></div>}
       </div>
       <DictionaryWorkbench />
