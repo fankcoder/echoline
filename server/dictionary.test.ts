@@ -11,4 +11,8 @@ describe('ECDICT normalization', () => {
     expect(__testing.wordCandidates('studies')).toContain('study');
     expect(__testing.wordCandidates('running')).toContain('run');
   });
+
+  it('escapes SQL LIKE control characters in a lookup term', () => {
+    expect(__testing.escapeLike('100%_sure\\ok')).toBe('100\\%\\_sure\\\\ok');
+  });
 });

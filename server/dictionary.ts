@@ -5,6 +5,10 @@ import type { EchoDatabase } from './db.js';
 
 const DICTIONARY_VERSION = 'ecdict-2026.08';
 const defaultDictionaryPath = resolve('data/dictionaries/ecdict.db');
+const DICTIONARY_SOURCE = 'ECDICT 英汉词典（约 77 万词条）';
+const SEARCH_LIMIT = 12;
+
+export type DictionarySearchDirection = 'en-zh' | 'zh-en';
 
 const builtIn: Record<string, { ipa: string; type: string; meaning: string; note: string }> = {
   novice: { ipa: '/ˈnɑːvɪs/', type: 'n.', meaning: '新手；初学者', note: '刚进入某个领域、经验尚少的人。' },
@@ -21,6 +25,23 @@ function dictionaryPath(): string {
 
 function cleanField(value: unknown): string {
   return typeof value === 'string' ? value.replace(/\\n/g, '；').replace(/\s*；\s*/g, '；').trim() : '';
+}
+
+function entryFromRow(row: any, requestedWord = '') {
+  const labels = [row.collins ? `柯林斯 ${row.collins} 星` : '', row.oxford ? '牛津核心词' : '', cleanField(row.tag)].filter(Boolean).join(' · ');
+  const definition = cleanField(row.definition);
+  return {
+    word: row.word,
+    ipa: row.phonetic ? `/${row.phonetic}/` : '',
+    type: cleanField(row.pos) || 'word',
+    meaning: cleanField(row.translation),
+    note: [row.word.toLowerCase() !== requestedWord.toLowerCase() ? `原形：${row.word}` : '', definition, labels].filter(Boolean).join('；'),
+    example: '', audio: '', source: DICTIONARY_SOURCE, dictionaryVersion: DICTIONARY_VERSION,
+  };
+}
+
+function escapeLike(value: string): string {
+  return value.replace(/[\\%_]/g, '\\$&');
 }
 
 function wordCandidates(word: string): string[] {
@@ -47,16 +68,28 @@ function queryEcdict(word: string) {
     const query = dictionary.prepare('SELECT word,phonetic,definition,translation,pos,collins,oxford,tag FROM stardict WHERE word=? COLLATE NOCASE LIMIT 1');
     const row = wordCandidates(word).map((candidate) => query.get(candidate) as any).find((candidate) => candidate && cleanField(candidate.translation));
     if (!row || !cleanField(row.translation)) return null;
-    const labels = [row.collins ? `柯林斯 ${row.collins} 星` : '', row.oxford ? '牛津核心词' : '', cleanField(row.tag)].filter(Boolean).join(' · ');
-    const definition = cleanField(row.definition);
-    return {
-      word: row.word,
-      ipa: row.phonetic ? `/${row.phonetic}/` : '',
-      type: cleanField(row.pos) || 'word',
-      meaning: cleanField(row.translation),
-      note: [row.word.toLowerCase() !== word ? `原形：${row.word}` : '', definition, labels].filter(Boolean).join('；'),
-      example: '', audio: '', source: 'ECDICT 英汉词典（约 77 万词条）', dictionaryVersion: DICTIONARY_VERSION,
-    };
+    return entryFromRow(row, word);
+  } finally { dictionary.close(); }
+}
+
+function searchEcdict(query: string, direction: DictionarySearchDirection) {
+  const filename = dictionaryPath();
+  if (!existsSync(filename)) throw new Error('离线英汉词典尚未安装，请运行 npm run dictionary:install');
+  const dictionary = new DatabaseSync(filename, { readOnly: true });
+  try {
+    const escaped = escapeLike(query);
+    const statement = direction === 'en-zh'
+      ? dictionary.prepare(`SELECT word,phonetic,definition,translation,pos,collins,oxford,tag
+          FROM stardict WHERE word LIKE ? ESCAPE '\\' COLLATE NOCASE AND translation IS NOT NULL AND translation != ''
+          ORDER BY CASE WHEN word=? COLLATE NOCASE THEN 0 WHEN word LIKE ? ESCAPE '\\' COLLATE NOCASE THEN 1 ELSE 2 END,
+            collins DESC, oxford DESC, frq DESC, LENGTH(word), word LIMIT ?`)
+      : dictionary.prepare(`SELECT word,phonetic,definition,translation,pos,collins,oxford,tag
+          FROM stardict WHERE (translation LIKE ? ESCAPE '\\' OR definition LIKE ? ESCAPE '\\') AND translation IS NOT NULL AND translation != ''
+          ORDER BY collins DESC, oxford DESC, frq DESC, LENGTH(word), word LIMIT ?`);
+    const rows = direction === 'en-zh'
+      ? statement.all(`%${escaped}%`, query, `${escaped}%`, SEARCH_LIMIT)
+      : statement.all(`%${escaped}%`, `%${escaped}%`, SEARCH_LIMIT);
+    return (rows as any[]).map((row) => entryFromRow(row, direction === 'en-zh' ? query : ''));
   } finally { dictionary.close(); }
 }
 
@@ -98,4 +131,10 @@ export async function lookupWord(db: EchoDatabase, rawWord: string) {
   return payload;
 }
 
-export const __testing = { cleanField, dictionaryPath, wordCandidates };
+export function searchDictionary(rawQuery: string, direction: DictionarySearchDirection) {
+  const query = rawQuery.trim();
+  if (!query) throw new Error('请输入要查询的内容');
+  return { direction, query, entries: searchEcdict(query, direction) };
+}
+
+export const __testing = { cleanField, dictionaryPath, wordCandidates, escapeLike };

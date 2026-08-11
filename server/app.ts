@@ -3,7 +3,7 @@ import Fastify, { type FastifyInstance } from 'fastify';
 import fastifyStatic from '@fastify/static';
 import { z, ZodError } from 'zod';
 import { EchoDatabase } from './db.js';
-import { lookupWord } from './dictionary.js';
+import { lookupWord, searchDictionary } from './dictionary.js';
 import { resolveLessonAssets, RESOLVER_VERSION } from './resolver.js';
 import { translateCue } from './translation.js';
 import { addLessonSchema, createCourseSchema, phraseSchema, phraseUpdateSchema, progressSchema, reorderSchema, resolveLessonSchema, settingsSchema, updateCourseSchema, vocabularySchema } from './types.js';
@@ -136,6 +136,11 @@ export async function buildApp(options: { database?: EchoDatabase; production?: 
   app.get('/api/dictionary/:word', async (request, reply) => {
     const { word } = z.object({ word: z.string().min(1).max(80) }).parse(request.params);
     try { reply.send(await lookupWord(db, word)); } catch (error) { reply.code(404).send({ error: { code: 'WORD_NOT_FOUND', message: errorMessage(error) } }); }
+  });
+  app.get('/api/dictionary/search', async (request, reply) => {
+    const { q, direction } = z.object({ q: z.string().trim().min(1).max(80), direction: z.enum(['en-zh', 'zh-en']) }).parse(request.query);
+    try { reply.send(searchDictionary(q, direction)); }
+    catch (error) { reply.code(503).send({ error: { code: 'DICTIONARY_UNAVAILABLE', message: errorMessage(error) } }); }
   });
 
   app.get('/api/export', async (_request, reply) => reply.header('Content-Disposition', `attachment; filename="echoline-${new Date().toISOString().slice(0,10)}.json"`).send(db.exportData()));

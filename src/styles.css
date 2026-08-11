@@ -136,7 +136,8 @@ button { cursor: pointer; }
 .dictionary-tooltip.above { transform: translate(-50%, -100%); }
 .dictionary-tooltip::before { content: ''; position: absolute; left: 50%; top: -5px; width: 8px; height: 8px; transform: translateX(-50%) rotate(45deg); border-left: 1px solid #314039; border-top: 1px solid #314039; background: #17201d; }.dictionary-tooltip.above::before { top: auto; bottom: -5px; border: 0; border-right: 1px solid #314039; border-bottom: 1px solid #314039; }
 .dictionary-tooltip > div { display: flex; align-items: baseline; gap: 7px; min-width: 0; }.dictionary-tooltip strong { font-family: Georgia, serif; font-size: 14px; }.dictionary-tooltip small { min-width: 0; overflow: hidden; color: #aebbb6; font-size: 8px; text-overflow: ellipsis; white-space: nowrap; }.dictionary-tooltip p { margin: 5px 0 0; color: #edf6f2; font-size: 11px; font-weight: 600; line-height: 1.45; }
-.vocabulary-list { grid-row: 2 / 5; overflow: auto; padding: 16px; }.vocab-summary { display: grid; grid-template-columns: auto 1fr auto; align-items: baseline; gap: 8px; padding: 15px; background: #17201d; color: #fff; border-radius: 6px; margin-bottom: 12px; }.vocab-summary strong { font-size: 27px; }.vocab-summary span { color: #bfc9c5; font-size: 11px; }.vocab-summary button { display: flex; align-items: center; gap: 5px; border: 1px solid #ffffff2e; background: #ffffff0e; color: #fff; border-radius: 5px; padding: 7px 9px; font-size: 10px; }.vocab-item { width: 100%; display: grid; grid-template-columns: 105px 1fr 22px; align-items: center; gap: 12px; padding: 13px 11px; border: 0; border-bottom: 1px solid #e7ebe9; background: #fff; text-align: left; }.vocab-item:hover { background: #f7faf8; }.vocab-item strong,.vocab-item small { display: block; }.vocab-item strong { font-family: Georgia, serif; font-size: 15px; }.vocab-item small { color: #89928f; font-size: 9px; margin-top: 2px; }.vocab-item p { margin: 0; color: #5f6965; font-size: 10px; }.vocab-item svg { color: var(--green); }
+.vocabulary-layout { grid-row: 2 / -1; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr) minmax(255px, 310px); }.vocabulary-list { min-height: 0; overflow: auto; padding: 16px; }.vocab-summary { display: grid; grid-template-columns: auto 1fr auto; align-items: baseline; gap: 8px; padding: 15px; background: #17201d; color: #fff; border-radius: 6px; margin-bottom: 12px; }.vocab-summary strong { font-size: 27px; }.vocab-summary span { color: #bfc9c5; font-size: 11px; }.vocab-summary button { display: flex; align-items: center; gap: 5px; border: 1px solid #ffffff2e; background: #ffffff0e; color: #fff; border-radius: 5px; padding: 7px 9px; font-size: 10px; }.vocab-item { width: 100%; display: grid; grid-template-columns: 105px 1fr 22px; align-items: center; gap: 12px; padding: 13px 11px; border: 0; border-bottom: 1px solid #e7ebe9; background: #fff; text-align: left; }.vocab-item:hover { background: #f7faf8; }.vocab-item strong,.vocab-item small { display: block; }.vocab-item strong { font-family: Georgia, serif; font-size: 15px; }.vocab-item small { color: #89928f; font-size: 9px; margin-top: 2px; }.vocab-item p { margin: 0; color: #5f6965; font-size: 10px; }.vocab-item svg { color: var(--green); }
+.dictionary-workbench { min-width: 0; min-height: 0; display: flex; flex-direction: column; padding: 16px; border-left: 1px solid var(--line); background: #f7faf8; }.dictionary-workbench-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }.dictionary-workbench-head span,.dictionary-workbench-head strong { display: block; }.dictionary-workbench-head span { color: var(--green-dark); font-size: 8px; font-weight: 700; letter-spacing: .8px; text-transform: uppercase; }.dictionary-workbench-head strong { margin-top: 3px; font-size: 14px; }.dictionary-workbench-head > svg { color: var(--green-dark); }.dictionary-direction-tabs { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; margin-top: 15px; padding: 3px; border: 1px solid #dfe7e3; border-radius: 6px; background: #edf2ef; }.dictionary-direction-tabs button { height: 28px; border: 0; border-radius: 4px; background: transparent; color: #6a7570; font-size: 10px; font-weight: 600; }.dictionary-direction-tabs button.active { background: #fff; color: var(--green-dark); box-shadow: 0 1px 3px #17201d14; }.dictionary-search-form { height: 36px; display: grid; grid-template-columns: 16px minmax(0, 1fr) auto; align-items: center; gap: 7px; margin-top: 11px; padding: 0 4px 0 9px; border: 1px solid #ccd9d3; border-radius: 5px; background: #fff; color: #82908a; }.dictionary-search-form input { min-width: 0; width: 100%; border: 0; outline: 0; background: transparent; color: var(--ink); font-size: 11px; }.dictionary-search-form button { height: 26px; border: 0; border-radius: 4px; background: var(--ink); color: #fff; padding: 0 8px; font-size: 9px; font-weight: 600; }.dictionary-search-form button:disabled { opacity: .5; cursor: default; }.dictionary-results { min-height: 0; flex: 1; overflow: auto; margin-top: 10px; }.dictionary-state { display: flex; align-items: center; gap: 6px; margin: 9px 0; color: #7b8781; font-size: 10px; line-height: 1.55; }.dictionary-state.error { color: #b14d3c; }.dictionary-result { padding: 11px 0; border-bottom: 1px solid #dfe6e2; }.dictionary-result > div { display: flex; align-items: baseline; gap: 6px; min-width: 0; }.dictionary-result strong { min-width: 0; overflow-wrap: anywhere; color: var(--ink); font-family: Georgia, 'Times New Roman', serif; font-size: 14px; }.dictionary-result small { min-width: 0; overflow: hidden; color: #86918c; font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }.dictionary-result p { margin: 5px 0 0; color: #3d4a44; font-size: 11px; font-weight: 600; line-height: 1.55; }.dictionary-result span { display: block; margin-top: 5px; color: #7e8984; font-size: 9px; line-height: 1.55; }.dictionary-workbench-source { margin-top: 10px; color: #8a9590; font-size: 8px; line-height: 1.5; }
 
 .review-panel { grid-row: 2 / 6; min-height: 0; display: flex; flex-direction: column; overflow: hidden; background: #f7f9f8; }
 .review-toolbar { min-height: 52px; display: flex; align-items: center; gap: 8px; padding: 9px 14px; border-bottom: 1px solid var(--line); background: #fff; }
@@ -422,6 +423,15 @@ button { cursor: pointer; }
 .dark-mode .transcript-list { background: #18201c; }
 .dark-mode .cue-row { background: #18201c; }
 .dark-mode .cue-row.active { background: var(--green-soft); }
+.dark-mode .dictionary-workbench { border-color: var(--line); background: #141b18; }
+.dark-mode .dictionary-direction-tabs { border-color: #34413b; background: #202a25; }
+.dark-mode .dictionary-direction-tabs button { color: #aab7b1; }
+.dark-mode .dictionary-direction-tabs button.active { background: #18201c; color: var(--green-dark); }
+.dark-mode .dictionary-search-form { border-color: var(--line); background: #18201c; color: #85928b; }
+.dark-mode .dictionary-search-form input { color: var(--ink); }
+.dark-mode .dictionary-result { border-color: var(--line); }
+.dark-mode .dictionary-result p { color: #c0cbc6; }
+.dark-mode .dictionary-result span,.dark-mode .dictionary-state,.dark-mode .dictionary-workbench-source { color: #8f9c96; }
 
 @media (max-width: 1100px) {
   .workspace { grid-template-columns: minmax(460px, 1fr) 330px; }
@@ -452,6 +462,8 @@ button { cursor: pointer; }
   }
   .player-column .player-import { margin-right: -18px; margin-left: -18px; padding-right: 18px; padding-left: 18px; }
   .learning-panel { height: 760px; border-right: 0; border-top: 1px solid var(--line); }
+  .vocabulary-layout { grid-template-columns: minmax(0, 1fr) 255px; }
+  .dictionary-workbench { padding: 13px; }
 }
 
 @media (max-width: 620px) {
@@ -478,4 +490,8 @@ button { cursor: pointer; }
   .cue-en { font-size: 13px; }
   .playing-bars { left: 31px; top: 39px; }
   .word-inspector { max-height: 210px; overflow: auto; padding-right: 14px; padding-left: 14px; }
+  .vocabulary-layout { grid-template-columns: 1fr; grid-template-rows: minmax(260px, 1fr) 270px; overflow: auto; }
+  .vocabulary-list { overflow: visible; }
+  .dictionary-workbench { min-height: 270px; border-top: 1px solid var(--line); border-left: 0; }
+  .dictionary-results { min-height: 0; }
 }

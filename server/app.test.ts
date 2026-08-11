@@ -30,6 +30,13 @@ describe('local production API', () => {
     expect(response.json().error.code).toBe('ORIGIN_REJECTED');
   });
 
+  it('validates dictionary search direction before querying the local database', async () => {
+    app = await buildApp({ database: new EchoDatabase(':memory:') });
+    const response = await app.inject({ method: 'GET', url: '/api/dictionary/search?q=frontier&direction=invalid' });
+    expect(response.statusCode).toBe(400);
+    expect(response.json().error.code).toBe('VALIDATION_ERROR');
+  });
+
   it('returns a cached translation for only the requested cue', async () => {
     const db = new EchoDatabase(':memory:'); app = await buildApp({ database: db });
     const lesson = db.upsertPendingLesson('https://learn.deeplearning.ai/course/lesson/on-demand');

@@ -1,6 +1,7 @@
 import { Bookmark, BookmarkCheck, BookOpen, BrainCircuit, Languages, Library, LoaderCircle, Pencil, Play, Search, Sparkles, Trash2 } from 'lucide-react';
-import { useMemo, useRef } from 'react';
-import type { Cue, DictionaryEntry, VocabularyItem } from '../types';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { api } from '../api';
+import type { Cue, DictionaryEntry, DictionarySearchDirection, DictionarySearchResult, VocabularyItem } from '../types';
 
 function normalizeWord(value: string) { return value.toLowerCase().replace(/^[^a-z]+|[^a-z]+$/g, ''); }
 
@@ -26,6 +27,46 @@ function PhraseText({ text, phrases, saved, onHover, onLeave, onToggle }: { text
     if (!phrase) return <WordText key={index} text={part} saved={saved} onHover={(word, rect) => onHover({ word, text: word, kind: 'word', meaning: '', note: '', example: '', lessonId: null, cueId: null, addedAt: 0, reviewCount: 0, lastReviewedAt: null, groupIndex: 0 }, rect)} onLeave={onLeave} onToggle={onToggle} />;
     return <span key={`${phrase.word}-${index}`} className="phrase-saved" onMouseEnter={(event) => onHover(phrase, event.currentTarget.getBoundingClientRect())} onMouseLeave={onLeave}>{part}</span>;
   })}</>;
+}
+
+function DictionaryWorkbench() {
+  const [direction, setDirection] = useState<DictionarySearchDirection>('en-zh');
+  const [query, setQuery] = useState(''); const [result, setResult] = useState<DictionarySearchResult | null>(null);
+  const [loading, setLoading] = useState(false); const [error, setError] = useState(''); const requestRef = useRef<AbortController | null>(null);
+  useEffect(() => () => requestRef.current?.abort(), []);
+
+  const selectDirection = (next: DictionarySearchDirection) => {
+    requestRef.current?.abort(); setDirection(next); setQuery(''); setResult(null); setError(''); setLoading(false);
+  };
+  const search = async () => {
+    const value = query.trim(); if (!value) return;
+    requestRef.current?.abort(); const controller = new AbortController(); requestRef.current = controller; setLoading(true); setError(''); setResult(null);
+    try { setResult(await api<DictionarySearchResult>(`/api/dictionary/search?direction=${direction}&q=${encodeURIComponent(value)}`, { signal: controller.signal })); }
+    catch (reason) { if ((reason as Error).name !== 'AbortError') setError((reason as Error).message); }
+    finally { if (requestRef.current === controller) setLoading(false); }
+  };
+  const placeholder = direction === 'en-zh' ? '输入英文单词或短语' : '输入中文释义，例如：前沿';
+  return <aside className="dictionary-workbench" aria-label="双向词典">
+    <div className="dictionary-workbench-head"><div><span>Local Dictionary</span><strong>查词</strong></div><Languages size={18} /></div>
+    <div className="dictionary-direction-tabs" role="tablist" aria-label="选择词典方向">
+      <button type="button" role="tab" aria-selected={direction === 'en-zh'} className={direction === 'en-zh' ? 'active' : ''} onClick={() => selectDirection('en-zh')}>英汉词典</button>
+      <button type="button" role="tab" aria-selected={direction === 'zh-en'} className={direction === 'zh-en' ? 'active' : ''} onClick={() => selectDirection('zh-en')}>汉英词典</button>
+    </div>
+    <form className="dictionary-search-form" onSubmit={(event) => { event.preventDefault(); void search(); }}>
+      <Search size={15} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={placeholder} aria-label={placeholder} />
+      <button type="submit" disabled={!query.trim() || loading}>{loading ? <LoaderCircle className="spin" size={14} /> : '查询'}</button>
+    </form>
+    <div className="dictionary-results" aria-live="polite">
+      {loading && <p className="dictionary-state"><LoaderCircle className="spin" size={15} />正在查询本地词典…</p>}
+      {error && <p className="dictionary-state error">{error}</p>}
+      {!loading && !error && !result && <p className="dictionary-state">{direction === 'en-zh' ? '输入英文，查询英汉释义。' : '输入中文，反查对应英文词汇。'}</p>}
+      {!loading && !error && result?.entries.length === 0 && <p className="dictionary-state">未找到“{result.query}”相关词条。</p>}
+      {!loading && !error && result?.entries.map((entry) => <article className="dictionary-result" key={entry.word}>
+        <div><strong>{entry.word}</strong><small>{entry.ipa} {entry.type}</small></div><p>{entry.meaning}</p>{entry.note && <span>{entry.note}</span>}
+      </article>)}
+    </div>
+    <small className="dictionary-workbench-source">ECDICT 离线英汉词典 · 约 77 万词条</small>
+  </aside>;
 }
 
 type Props = {
@@ -77,10 +118,13 @@ export function TranscriptPanel(props: Props) {
         {props.dictionary?.example && <blockquote>{props.dictionary.example}</blockquote>}
         {props.dictionary?.source && <small className="dictionary-source">来源：{props.dictionary.source}</small>}
       </div>}
-    </> : <div className="vocabulary-list">
-      <div className="vocab-summary"><strong>{props.vocabulary.length}</strong><span>个学习项 · {Math.ceil(props.vocabulary.length / 10)} 组</span><button onClick={props.onReview} disabled={!props.vocabulary.length}><BrainCircuit size={14} />复习</button></div>
-      {props.vocabulary.map((item) => <button className="vocab-item" key={`${item.kind}-${item.word}`} onClick={() => item.kind === 'phrase' ? props.onPhraseRemove(item) : props.onWordToggle(item.word)}><span><strong>{item.text || item.word}</strong><small>{item.kind === 'phrase' ? `短语 · 第 ${item.groupIndex + 1} 组` : `第 ${item.groupIndex + 1} 组`}</small></span><p>{item.kind === 'phrase' ? item.meaning : `已复习 ${item.reviewCount} 次`}</p><BookmarkCheck size={15} /></button>)}
-      {!props.vocabulary.length && <div className="empty-review"><Library /><strong>生词本还是空的</strong><span>点击字幕里的单词或拖选短语即可收藏。</span></div>}
+    </> : <div className="vocabulary-layout">
+      <div className="vocabulary-list">
+        <div className="vocab-summary"><strong>{props.vocabulary.length}</strong><span>个学习项 · {Math.ceil(props.vocabulary.length / 10)} 组</span><button onClick={props.onReview} disabled={!props.vocabulary.length}><BrainCircuit size={14} />复习</button></div>
+        {props.vocabulary.map((item) => <button className="vocab-item" key={`${item.kind}-${item.word}`} onClick={() => item.kind === 'phrase' ? props.onPhraseRemove(item) : props.onWordToggle(item.word)}><span><strong>{item.text || item.word}</strong><small>{item.kind === 'phrase' ? `短语 · 第 ${item.groupIndex + 1} 组` : `第 ${item.groupIndex + 1} 组`}</small></span><p>{item.kind === 'phrase' ? item.meaning : `已复习 ${item.reviewCount} 次`}</p><BookmarkCheck size={15} /></button>)}
+        {!props.vocabulary.length && <div className="empty-review"><Library /><strong>生词本还是空的</strong><span>点击字幕里的单词或拖选短语即可收藏。</span></div>}
+      </div>
+      <DictionaryWorkbench />
     </div>}
     {props.tooltip && props.inspectedWord && <div className={`dictionary-tooltip ${props.tooltip.above ? 'above' : ''}`} style={{ left: props.tooltip.x, top: props.tooltip.y }} role="tooltip"><div><strong>{props.inspectedWord}</strong><small>{props.dictionary?.ipa} {props.dictionary?.type}</small></div><p>{props.dictionaryLoading ? '正在查词…' : props.dictionary?.meaning || '暂无释义'}</p></div>}
   </section>;

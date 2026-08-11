@@ -16,3 +16,5 @@ export type LessonManifest = {
   playback: { mediaUrl: string; resolvedAt: number; resolverVersion: string } | null;
 };
 export type DictionaryEntry = { word: string; ipa: string; type: string; meaning: string; note: string; example: string; audio: string; source: string };
+export type DictionarySearchDirection = 'en-zh' | 'zh-en';
+export type DictionarySearchResult = { direction: DictionarySearchDirection; query: string; entries: DictionaryEntry[] };
