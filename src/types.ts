@@ -2,7 +2,7 @@ export type Cue = { id: string; start: number; end: number; en: string; zh: stri
 export type Lesson = {
   id: string; sourceUrl: string; canonicalUrl: string; sourceVideoId: string | null; title: string;
   duration: number | null; manifestRevision: number; importStatus: 'pending' | 'ready' | 'failed';
-  captionStatus: 'pending' | 'ready' | 'failed'; translationStatus: 'idle' | 'running' | 'ready' | 'failed';
+  captionStatus: 'pending' | 'ready' | 'unavailable' | 'failed'; translationStatus: 'idle' | 'running' | 'ready' | 'failed';
   translationProgress: number; cueCount: number; position?: number;
 };
 export type Course = { id: string; name: string; createdAt: number; updatedAt: number; lessons: Lesson[] };
@@ -13,7 +13,7 @@ export type Bootstrap = { courses: Course[]; vocabulary: VocabularyItem[]; setti
 export type LessonManifest = {
   lesson: Lesson; cues: Cue[]; captionSource: 'official' | 'llm' | null;
   progress: { playbackSeconds: number; sessionSeconds: number; positionSeconds: number; activeCue: number; completedCueIds: string[]; lastStudiedAt?: number };
-  playback: { mediaUrl: string; resolvedAt: number; resolverVersion: string } | null;
+  playback: ({ kind: 'hls'; mediaUrl: string } | { kind: 'youtube'; videoId: string }) & { resolvedAt: number; resolverVersion: string } | null;
 };
 export type DictionaryEntry = { word: string; ipa: string; type: string; meaning: string; note: string; example: string; audio: string; source: string };
 export type DictionarySearchDirection = 'en-zh' | 'zh-en';

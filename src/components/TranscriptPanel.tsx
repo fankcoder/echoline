@@ -145,7 +145,7 @@ export function TranscriptPanel(props: Props) {
           <span className={`cue-zh ${cue.zh ? '' : 'translation-pending'}`}>{cue.zh || <button className="translate-cue-button" disabled={props.translatingCueIds.has(cue.id)} onClick={(event) => { event.stopPropagation(); props.onTranslate(cue.id); }}>{props.translatingCueIds.has(cue.id) ? <LoaderCircle className="spin" /> : <Languages />}{props.translatingCueIds.has(cue.id) ? '免费翻译中' : '免费翻译本句'}</button>}</span>
           {index === props.activeIndex && <span className="playing-bars" aria-hidden="true"><i /><i /><i /></span>}
         </article>)}
-        {!filtered.length && <div className="empty-course compact"><Search /><strong>没有匹配的字幕</strong></div>}
+        {!filtered.length && <div className="empty-course compact"><Search /><strong>{props.cues.length ? '没有匹配的字幕' : '未找到可导入的公开英文字幕'}</strong><span>{props.cues.length ? '' : '仍可使用播放器观看；逐句学习需要视频提供公开英文字幕。'}</span></div>}
       </div>
       {inspectedPhrase ? <div className="word-inspector phrase-inspector">
         <div className="word-title"><div><span>{inspectedPhrase.text}</span><small>短语 · 已收藏</small></div><div className="phrase-inspector-actions"><button onClick={() => props.onPhraseEdit(inspectedPhrase)} aria-label="编辑短语"><Pencil size={16} /></button><button onClick={() => props.onPhraseRemove(inspectedPhrase)} aria-label="移除短语"><Trash2 size={16} /></button></div></div>

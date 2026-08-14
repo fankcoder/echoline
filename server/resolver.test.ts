@@ -23,4 +23,16 @@ describe('DeepLearning lesson parser helpers', () => {
     expect(__testing.isPrivateAddress('192.168.1.4')).toBe(true);
     expect(__testing.isPrivateAddress('8.8.8.8')).toBe(false);
   });
+
+  it('recognizes supported YouTube URL forms', () => {
+    expect(__testing.youtubeVideoId('https://www.youtube.com/watch?v=dQw4w9WgXcQ&feature=share')).toBe('dQw4w9WgXcQ');
+    expect(__testing.youtubeVideoId('https://youtu.be/dQw4w9WgXcQ?t=42')).toBe('dQw4w9WgXcQ');
+    expect(__testing.youtubeVideoId('https://www.youtube.com/shorts/dQw4w9WgXcQ')).toBe('dQw4w9WgXcQ');
+  });
+
+  it('reads public YouTube metadata and selects an English caption track', () => {
+    const player = __testing.youtubePlayerData('var ytInitialPlayerResponse = {"videoDetails":{"title":"Video title","lengthSeconds":"125"},"captions":{"playerCaptionsTracklistRenderer":{"captionTracks":[{"baseUrl":"https://www.youtube.com/api/timedtext?v=x","languageCode":"en","kind":"asr"},{"baseUrl":"https://www.youtube.com/api/timedtext?v=x&lang=en-US","languageCode":"en-US"}]}}};');
+    expect(player).toMatchObject({ title: 'Video title', duration: 125 });
+    expect(__testing.pickYouTubeEnglishTrack(player.tracks)).toMatchObject({ languageCode: 'en-US' });
+  });
 });

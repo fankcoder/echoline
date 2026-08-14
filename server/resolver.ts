@@ -2,11 +2,12 @@ import { lookup } from 'node:dns/promises';
 import { isIP } from 'node:net';
 import { captionHash, parseVtt } from './vtt.js';
 
-const PAGE_HOSTS = new Set(['learn.deeplearning.ai']);
-const ASSET_HOSTS = new Set(['video.deeplearning.ai']);
+const DEEPLEARNING_PAGE_HOSTS = new Set(['learn.deeplearning.ai']);
+const DEEPLEARNING_ASSET_HOSTS = new Set(['video.deeplearning.ai']);
+const YOUTUBE_HOSTS = new Set(['youtube.com', 'www.youtube.com', 'm.youtube.com', 'music.youtube.com', 'youtu.be']);
 const MAX_HTML_BYTES = 5 * 1024 * 1024;
 const MAX_CAPTION_BYTES = 3 * 1024 * 1024;
-export const RESOLVER_VERSION = 'deeplearning-v1';
+export const RESOLVER_VERSION = 'multi-source-v1';
 
 function isPrivateAddress(address: string) {
   if (!isIP(address)) return true;
@@ -83,20 +84,83 @@ function getVideoId(mediaUrl: string) {
   return filename.replace(/-master\.m3u8$/i, '').replace(/\.m3u8$/i, '') || null;
 }
 
+function youtubeVideoId(sourceUrl: string) {
+  let url: URL;
+  try { url = new URL(sourceUrl); } catch { return null; }
+  const host = url.hostname.toLowerCase();
+  const pathParts = url.pathname.split('/').filter(Boolean);
+  let candidate = '';
+  if (host === 'youtu.be') candidate = pathParts[0] || '';
+  else if (YOUTUBE_HOSTS.has(host)) {
+    if (url.pathname === '/watch') candidate = url.searchParams.get('v') || '';
+    else if (['embed', 'shorts', 'live'].includes(pathParts[0] || '')) candidate = pathParts[1] || '';
+  }
+  return /^[A-Za-z0-9_-]{11}$/.test(candidate) ? candidate : null;
+}
+
+function extractJsonObject(source: string, marker: string) {
+  const markerIndex = source.indexOf(marker);
+  if (markerIndex < 0) return null;
+  const start = source.indexOf('{', markerIndex + marker.length);
+  if (start < 0) return null;
+  let depth = 0; let quote = ''; let escaped = false;
+  for (let index = start; index < source.length; index += 1) {
+    const character = source[index];
+    if (quote) {
+      if (escaped) escaped = false;
+      else if (character === '\\') escaped = true;
+      else if (character === quote) quote = '';
+      continue;
+    }
+    if (character === '"' || character === "'") { quote = character; continue; }
+    if (character === '{') depth += 1;
+    if (character === '}') {
+      depth -= 1;
+      if (depth === 0) return source.slice(start, index + 1);
+    }
+  }
+  return null;
+}
+
+type YouTubeCaptionTrack = { baseUrl: string; languageCode: string; kind?: string };
+type YouTubePlayerData = { title: string | null; duration: number | null; tracks: YouTubeCaptionTrack[] };
+
+function youtubePlayerData(source: string): YouTubePlayerData {
+  const serialized = extractJsonObject(source, 'ytInitialPlayerResponse =') || extractJsonObject(source, 'ytInitialPlayerResponse=');
+  if (!serialized) return { title: null, duration: null, tracks: [] };
+  try {
+    const parsed = JSON.parse(serialized) as any;
+    const trackList = parsed?.captions?.playerCaptionsTracklistRenderer?.captionTracks;
+    const tracks = Array.isArray(trackList) ? trackList
+      .filter((track: any) => typeof track?.baseUrl === 'string' && typeof track?.languageCode === 'string')
+      .map((track: any) => ({ baseUrl: track.baseUrl, languageCode: track.languageCode, ...(typeof track.kind === 'string' ? { kind: track.kind } : {}) })) : [];
+    const length = Number(parsed?.videoDetails?.lengthSeconds);
+    return {
+      title: typeof parsed?.videoDetails?.title === 'string' ? parsed.videoDetails.title : null,
+      duration: Number.isFinite(length) && length > 0 ? length : null,
+      tracks,
+    };
+  } catch { return { title: null, duration: null, tracks: [] }; }
+}
+
+function pickYouTubeEnglishTrack(tracks: YouTubeCaptionTrack[]) {
+  const english = tracks.filter((track) => /^en(?:-|$)/i.test(track.languageCode));
+  return english.find((track) => track.kind !== 'asr') || english[0] || null;
+}
+
 export type ResolvedAssets = {
   title: string;
   sourceVideoId: string | null;
-  mediaUrl: string;
-  englishUrl: string;
-  chineseUrl: string | null;
   duration: number | null;
   cues: ReturnType<typeof parseVtt>;
   hash: string;
   officialChinese?: string[];
+  playback: { kind: 'hls'; mediaUrl: string } | { kind: 'youtube'; videoId: string };
+  captionStatus: 'ready' | 'unavailable';
 };
 
-export async function resolveLessonAssets(sourceUrl: string, fallbackTitle?: string): Promise<ResolvedAssets> {
-  const { text: rawHtml } = await safeFetch(sourceUrl, PAGE_HOSTS, MAX_HTML_BYTES);
+async function resolveDeepLearningAssets(sourceUrl: string, fallbackTitle?: string): Promise<ResolvedAssets> {
+  const { text: rawHtml } = await safeFetch(sourceUrl, DEEPLEARNING_PAGE_HOSTS, MAX_HTML_BYTES);
   const html = decodeEmbeddedHtml(rawHtml);
   const mediaCandidates = uniqueUrls(html, 'm3u8');
   const mediaUrl = mediaCandidates.find((url) => /-master\.m3u8/i.test(url)) || mediaCandidates[0];
@@ -105,21 +169,51 @@ export async function resolveLessonAssets(sourceUrl: string, fallbackTitle?: str
   const englishUrl = pickTrack(captionCandidates, 'en');
   if (!englishUrl) throw new Error('课程页面中没有找到英文字幕');
   const chineseUrl = pickTrack(captionCandidates, 'zh') || null;
-  const english = await safeFetch(englishUrl, ASSET_HOSTS, MAX_CAPTION_BYTES);
+  const english = await safeFetch(englishUrl, DEEPLEARNING_ASSET_HOSTS, MAX_CAPTION_BYTES);
   const cues = parseVtt(english.text);
   let officialChinese: string[] | undefined;
   if (chineseUrl && chineseUrl !== englishUrl) {
     try {
-      const chinese = parseVtt((await safeFetch(chineseUrl, ASSET_HOSTS, MAX_CAPTION_BYTES)).text, 'zh');
+      const chinese = parseVtt((await safeFetch(chineseUrl, DEEPLEARNING_ASSET_HOSTS, MAX_CAPTION_BYTES)).text, 'zh');
       if (chinese.length === cues.length) officialChinese = chinese.map((cue) => cue.en);
     } catch { /* official Chinese is optional */ }
   }
   const durationCandidate = html.match(/["']duration["']\s*:\s*(\d+(?:\.\d+)?)/i)?.[1];
   return {
-    title: pageTitle(html, sourceUrl, fallbackTitle), sourceVideoId: getVideoId(mediaUrl), mediaUrl,
-    englishUrl, chineseUrl, duration: durationCandidate ? Number(durationCandidate) : cues.at(-1)?.end || null,
-    cues, hash: captionHash(cues), officialChinese,
+    title: pageTitle(html, sourceUrl, fallbackTitle), sourceVideoId: getVideoId(mediaUrl),
+    duration: durationCandidate ? Number(durationCandidate) : cues.at(-1)?.end || null,
+    cues, hash: captionHash(cues), officialChinese, playback: { kind: 'hls', mediaUrl }, captionStatus: 'ready',
   };
 }
 
-export const __testing = { decodeEmbeddedHtml, uniqueUrls, pageTitle, pickTrack, getVideoId, isPrivateAddress };
+async function resolveYouTubeAssets(sourceUrl: string, videoId: string, fallbackTitle?: string): Promise<ResolvedAssets> {
+  const pageUrl = `https://www.youtube.com/watch?v=${videoId}`;
+  const { text: html } = await safeFetch(pageUrl, YOUTUBE_HOSTS, MAX_HTML_BYTES);
+  const player = youtubePlayerData(html);
+  const track = pickYouTubeEnglishTrack(player.tracks);
+  let cues: ReturnType<typeof parseVtt> = [];
+  if (track) {
+    try {
+      const trackUrl = new URL(track.baseUrl);
+      trackUrl.searchParams.set('fmt', 'vtt');
+      cues = parseVtt((await safeFetch(trackUrl.toString(), YOUTUBE_HOSTS, MAX_CAPTION_BYTES)).text);
+    } catch { cues = []; }
+  }
+  return {
+    title: fallbackTitle || player.title || `YouTube 视频 ${videoId}`,
+    sourceVideoId: videoId,
+    duration: player.duration || cues.at(-1)?.end || null,
+    cues,
+    hash: captionHash(cues),
+    playback: { kind: 'youtube', videoId },
+    captionStatus: cues.length ? 'ready' : 'unavailable',
+  };
+}
+
+export async function resolveLessonAssets(sourceUrl: string, fallbackTitle?: string): Promise<ResolvedAssets> {
+  const videoId = youtubeVideoId(sourceUrl);
+  if (videoId) return resolveYouTubeAssets(sourceUrl, videoId, fallbackTitle);
+  return resolveDeepLearningAssets(sourceUrl, fallbackTitle);
+}
+
+export const __testing = { decodeEmbeddedHtml, uniqueUrls, pageTitle, pickTrack, getVideoId, isPrivateAddress, youtubeVideoId, extractJsonObject, youtubePlayerData, pickYouTubeEnglishTrack };

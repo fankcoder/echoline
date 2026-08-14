@@ -24,7 +24,7 @@ npm start
 
 ## 翻译与词典
 
-- 导入公开课时后，英文字幕立即可用。
+- DeepLearning.AI 公开课时会导入英文字幕；YouTube 公开视频会使用官方嵌入播放器，并在视频发布者提供公开英文字幕时导入。
 - 有官方中文字幕时直接保存并使用，不调用外部翻译接口。
 - 没有官方中文字幕时，页面不会自动翻译。用户点击某句旁边的“免费翻译本句”后，才调用 MyMemory 免费接口翻译该句，不使用 LLM，也不需要 OpenAI Key。
 - 如希望翻译内容不发送到公共服务，可自行部署 LibreTranslate，并设置 `TRANSLATION_PROVIDER=libretranslate` 与 `LIBRETRANSLATE_URL`。
@@ -55,7 +55,7 @@ ECDICT 数据来自 [skywind3000/ECDICT](https://github.com/skywind3000/ECDICT)�
 - 切集先暂停媒体并清空字幕，再请求目标课时清单。
 - 请求使用取消信号和 `lessonId + manifestRevision` 隔离，旧响应不能覆盖新课时。
 - HLS 网络/媒体错误先恢复，致命错误重新解析临时签名地址。
-- 解析器限制 HTTPS 和域名白名单，校验 DNS、逐跳重定向、响应大小和超时，并对 API 限流。
+- 解析器限制 HTTPS 和来源域名白名单，校验 DNS、逐跳重定向、响应大小和超时，并对 API 限流。
 - TypeScript 和 Zod 校验前后端边界；测试覆盖 VTT、字幕哈希、课时隔离、课程去重、排序和 API 来源限制。
 - 课程管理、播放器和复习使用可刷新深链接；暗色、视频隐藏和学习模式重复次数为全局持久设置。
 
@@ -70,4 +70,4 @@ npm run test:e2e
 
 ## 使用边界
 
-v1 只解析公开的 `learn.deeplearning.ai` HTTPS 课时页面，不读取浏览器 Cookie，也不支持登录后资源。EchoLine 不下载或重新分发完整视频，只在用户本机保存学习所需的元数据、字幕、翻译和进度。使用第三方课程内容时，应遵守来源网站条款和版权要求。
+v1 支持公开的 `learn.deeplearning.ai` 课时页面和 YouTube 视频链接（`youtube.com`、`youtu.be`）。YouTube 使用官方 IFrame 播放器，不解析、下载或重新分发视频流；仅尝试读取公开视频已有的英文字幕。没有公开英文字幕的视频仍可播放，但无法使用逐句学习、查词和短语功能。应用不读取浏览器 Cookie，也不支持登录后资源。使用第三方课程内容时，应遵守来源网站条款和版权要求。

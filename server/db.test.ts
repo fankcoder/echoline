@@ -39,6 +39,7 @@ describe('EchoDatabase', () => {
 
   it('normalizes tracking parameters', () => {
     expect(canonicalizeUrl('https://example.com/a/?x=1#top')).toBe('https://example.com/a');
+    expect(canonicalizeUrl('https://youtu.be/dQw4w9WgXcQ?t=42')).toBe('https://www.youtube.com/watch?v=dQw4w9WgXcQ');
     expect(randomUUID()).toMatch(/^[0-9a-f-]{36}$/);
   });
 

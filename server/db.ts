@@ -64,6 +64,11 @@ CREATE TABLE IF NOT EXISTS jobs (
 
 export function canonicalizeUrl(value: string): string {
   const url = new URL(value);
+  const host = url.hostname.toLowerCase();
+  const youtubeHost = host === 'youtu.be' || ['youtube.com', 'www.youtube.com', 'm.youtube.com', 'music.youtube.com'].includes(host);
+  const pathParts = url.pathname.split('/').filter(Boolean);
+  const youtubeId = host === 'youtu.be' ? pathParts[0] : url.pathname === '/watch' ? url.searchParams.get('v') : ['embed', 'shorts', 'live'].includes(pathParts[0] || '') ? pathParts[1] : null;
+  if (youtubeHost && youtubeId && /^[A-Za-z0-9_-]{11}$/.test(youtubeId)) return `https://www.youtube.com/watch?v=${youtubeId}`;
   url.hash = '';
   url.search = '';
   url.pathname = url.pathname.replace(/\/+$/, '');
@@ -148,16 +153,17 @@ export class EchoDatabase {
     return this.getLesson(id)!;
   }
 
-  saveResolvedLesson(input: { id: string; sourceUrl: string; sourceVideoId?: string; title: string; duration?: number; cues: Omit<Cue,'zh'>[]; hash: string; officialChinese?: string[] }) {
+  saveResolvedLesson(input: { id: string; sourceUrl: string; sourceVideoId?: string; title: string; duration?: number; cues: Omit<Cue,'zh'>[]; hash: string; officialChinese?: string[]; captionStatus?: 'ready' | 'unavailable'; resolverVersion?: string }) {
     const now = Date.now();
     this.transaction(() => {
       this.db.prepare(`UPDATE lessons SET source_url=?,canonical_url=?,source_video_id=?,title=?,duration=?,manifest_revision=manifest_revision+1,
-        import_status='ready',caption_status='ready',translation_status=?,translation_progress=?,resolver_version='deeplearning-v1',updated_at=? WHERE id=?`)
+        import_status='ready',caption_status=?,translation_status=?,translation_progress=?,resolver_version=?,updated_at=? WHERE id=?`)
         .run(input.sourceUrl, canonicalizeUrl(input.sourceUrl), input.sourceVideoId || null, input.title, input.duration ?? null,
-          input.officialChinese?.length ? 'ready' : 'idle', input.officialChinese?.length ? 1 : 0, now, input.id);
-      this.db.prepare('INSERT INTO caption_tracks(id,lesson_id,language,source_kind,content,content_hash,created_at) VALUES(?,?,?,?,?,?,?) ON CONFLICT(lesson_id,language,content_hash) DO NOTHING')
+          input.captionStatus || 'ready', input.officialChinese?.length ? 'ready' : 'idle', input.officialChinese?.length ? 1 : 0, input.resolverVersion || 'deeplearning-v1', now, input.id);
+      this.db.prepare("DELETE FROM caption_tracks WHERE lesson_id=? AND language IN ('en','zh-CN')").run(input.id);
+      if (input.cues.length) this.db.prepare('INSERT INTO caption_tracks(id,lesson_id,language,source_kind,content,content_hash,created_at) VALUES(?,?,?,?,?,?,?)')
         .run(randomUUID(), input.id, 'en', 'official', JSON.stringify(input.cues), input.hash, now);
-      if (input.officialChinese?.length === input.cues.length) {
+      if (input.cues.length && input.officialChinese?.length === input.cues.length) {
         const zhCues = input.cues.map((cue, index) => ({ ...cue, en: input.officialChinese![index] }));
         this.db.prepare('INSERT INTO caption_tracks(id,lesson_id,language,source_kind,content,content_hash,created_at) VALUES(?,?,?,?,?,?,?) ON CONFLICT(lesson_id,language,content_hash) DO NOTHING')
           .run(randomUUID(), input.id, 'zh-CN', 'official', JSON.stringify(zhCues), input.hash, now);

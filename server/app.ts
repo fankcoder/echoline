@@ -8,7 +8,7 @@ import { resolveLessonAssets, RESOLVER_VERSION } from './resolver.js';
 import { translateCue } from './translation.js';
 import { addLessonSchema, createCourseSchema, phraseSchema, phraseUpdateSchema, progressSchema, reorderSchema, resolveLessonSchema, settingsSchema, updateCourseSchema, vocabularySchema } from './types.js';
 
-type PlaybackAsset = { mediaUrl: string; resolvedAt: number; resolverVersion: string };
+type PlaybackAsset = ({ kind: 'hls'; mediaUrl: string } | { kind: 'youtube'; videoId: string }) & { resolvedAt: number; resolverVersion: string };
 const playbackAssets = new Map<string, PlaybackAsset>();
 const requests = new Map<string, { count: number; resetAt: number }>();
 const LOCAL_ALLOWED_ORIGINS = new Set(['http://127.0.0.1:5173', 'http://localhost:5173', 'http://127.0.0.1:4173', 'http://localhost:4173', 'http://127.0.0.1:5174']);
@@ -57,8 +57,8 @@ export async function buildApp(options: { database?: EchoDatabase; production?: 
     lesson ||= db.upsertPendingLesson(sourceUrl, title, lessonId);
     try {
       const assets = await resolveLessonAssets(sourceUrl, title);
-      db.saveResolvedLesson({ id: lesson.id, sourceUrl, sourceVideoId: assets.sourceVideoId || undefined, title: title || assets.title, duration: assets.duration || undefined, cues: assets.cues, hash: assets.hash, officialChinese: assets.officialChinese });
-      playbackAssets.set(lesson.id, { mediaUrl: assets.mediaUrl, resolvedAt: Date.now(), resolverVersion: RESOLVER_VERSION });
+      db.saveResolvedLesson({ id: lesson.id, sourceUrl, sourceVideoId: assets.sourceVideoId || undefined, title: title || assets.title, duration: assets.duration || undefined, cues: assets.cues, hash: assets.hash, officialChinese: assets.officialChinese, captionStatus: assets.captionStatus, resolverVersion: RESOLVER_VERSION });
+      playbackAssets.set(lesson.id, { ...assets.playback, resolvedAt: Date.now(), resolverVersion: RESOLVER_VERSION });
       return hydrate(lesson.id)!;
     } catch (error) { db.markLessonFailed(lesson.id); throw error; }
   };
