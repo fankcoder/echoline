@@ -11,7 +11,17 @@ import { addLessonSchema, createCourseSchema, phraseSchema, phraseUpdateSchema, 
 type PlaybackAsset = { mediaUrl: string; resolvedAt: number; resolverVersion: string };
 const playbackAssets = new Map<string, PlaybackAsset>();
 const requests = new Map<string, { count: number; resetAt: number }>();
-const ALLOWED_ORIGINS = new Set(['http://127.0.0.1:5173', 'http://localhost:5173', 'http://127.0.0.1:4173', 'http://localhost:4173', 'http://127.0.0.1:5174']);
+const LOCAL_ALLOWED_ORIGINS = new Set(['http://127.0.0.1:5173', 'http://localhost:5173', 'http://127.0.0.1:4173', 'http://localhost:4173', 'http://127.0.0.1:5174']);
+
+function allowedOrigins() {
+  const configured = (process.env.PUBLIC_ORIGIN || '').split(',').flatMap((value) => {
+    try {
+      const url = new URL(value.trim());
+      return url.pathname === '/' && !url.search && !url.hash && ['http:', 'https:'].includes(url.protocol) ? [url.origin] : [];
+    } catch { return []; }
+  });
+  return new Set([...LOCAL_ALLOWED_ORIGINS, ...configured]);
+}
 
 function errorMessage(error: unknown) {
   if (error instanceof ZodError) return error.issues.map((issue) => issue.message).join('；');
@@ -24,7 +34,7 @@ export async function buildApp(options: { database?: EchoDatabase; production?: 
 
   app.addHook('onRequest', async (request, reply) => {
     const origin = request.headers.origin;
-    if (origin && !ALLOWED_ORIGINS.has(origin)) return reply.code(403).send({ error: { code: 'ORIGIN_REJECTED', message: '请求来源不受信任' } });
+    if (origin && !allowedOrigins().has(origin)) return reply.code(403).send({ error: { code: 'ORIGIN_REJECTED', message: '请求来源不受信任' } });
     const key = request.ip; const now = Date.now(); const current = requests.get(key);
     if (!current || current.resetAt < now) requests.set(key, { count: 1, resetAt: now + 60_000 });
     else if (++current.count > 180) return reply.code(429).send({ error: { code: 'RATE_LIMITED', message: '请求过于频繁，请稍后重试' } });

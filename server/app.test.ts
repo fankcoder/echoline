@@ -4,7 +4,7 @@ import { buildApp } from './app.js';
 import { EchoDatabase } from './db.js';
 
 let app: FastifyInstance | undefined;
-afterEach(async () => { await app?.close(); app = undefined; });
+afterEach(async () => { await app?.close(); app = undefined; delete process.env.PUBLIC_ORIGIN; });
 
 describe('local production API', () => {
   it('returns a versioned bootstrap document', async () => {
@@ -28,6 +28,13 @@ describe('local production API', () => {
     const response = await app.inject({ method: 'GET', url: '/api/bootstrap', headers: { origin: 'https://attacker.example' } });
     expect(response.statusCode).toBe(403);
     expect(response.json().error.code).toBe('ORIGIN_REJECTED');
+  });
+
+  it('allows an explicitly configured public origin', async () => {
+    process.env.PUBLIC_ORIGIN = 'https://anhao.net';
+    app = await buildApp({ database: new EchoDatabase(':memory:') });
+    const response = await app.inject({ method: 'GET', url: '/api/bootstrap', headers: { origin: 'https://anhao.net' } });
+    expect(response.statusCode).toBe(200);
   });
 
   it('validates dictionary search direction before querying the local database', async () => {

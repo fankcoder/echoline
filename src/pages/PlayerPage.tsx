@@ -21,6 +21,7 @@ export default function PlayerPage() {
   const completedRef = useRef(new Set<string>()); const progressBase = useRef({ playback: 0, session: 0 }); const progressDelta = useRef({ playback: 0, session: 0 }); const lastMediaTime = useRef(0);
   const [manifest, setManifest] = useState<LessonManifest | null>(null); const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading'); const [error, setError] = useState('');
   const [isPlaying, setIsPlaying] = useState(false); const [buffering, setBuffering] = useState(false); const [currentTime, setCurrentTime] = useState(0); const [duration, setDuration] = useState(0);
+  const [mediaReady, setMediaReady] = useState(false); const [playbackHint, setPlaybackHint] = useState('');
   const [activeIndex, setActiveIndex] = useState(0); const [phase, setPhaseState] = useState<Phase>('idle'); const [countdown, setCountdown] = useState(0); const [repeatIndex, setRepeatIndex] = useState(0); const [studyMode, setStudyMode] = useState(true);
   const [speed, setSpeed] = useState(1); const [volume, setVolume] = useState(.85); const [query, setQuery] = useState(''); const [tab, setTab] = useState<'transcript' | 'vocabulary'>('transcript');
   const [importUrl, setImportUrl] = useState(''); const [importing, setImporting] = useState(false); const [dictionary, setDictionary] = useState<DictionaryEntry | null>(null); const [dictionaryLoading, setDictionaryLoading] = useState(false); const [inspectedWord, setInspectedWord] = useState(''); const [tooltip, setTooltip] = useState<{ x: number; y: number; above: boolean } | null>(null);
@@ -39,7 +40,7 @@ export default function PlayerPage() {
     lessonAbortRef.current?.abort(); const controller = new AbortController(); lessonAbortRef.current = controller;
     const version = ++requestVersion.current;
     videoRef.current?.pause(); hlsRef.current?.destroy(); hlsRef.current = null;
-    setManifest(null); setStatus('loading'); setError(''); setQuery(''); setCurrentTime(0); setDuration(0); setActiveIndex(0); activeRef.current = 0; repeatIndexRef.current = 0; setRepeatIndex(0); setPhase('idle'); setCountdown(0); setTranslatingCueIds(new Set()); completedRef.current = new Set(); progressDelta.current = { playback: 0, session: 0 };
+    setManifest(null); setStatus('loading'); setError(''); setQuery(''); setCurrentTime(0); setDuration(0); setMediaReady(false); setPlaybackHint(''); setActiveIndex(0); activeRef.current = 0; repeatIndexRef.current = 0; setRepeatIndex(0); setPhase('idle'); setCountdown(0); setTranslatingCueIds(new Set()); completedRef.current = new Set(); progressDelta.current = { playback: 0, session: 0 };
     try {
       let result = await api<LessonManifest>(force ? `/api/lessons/${id}/refresh` : `/api/lessons/${id}`, { method: force ? 'POST' : 'GET', signal: controller.signal });
       if ((!result.playback || result.lesson.importStatus !== 'ready') && !force) result = await api<LessonManifest>(`/api/lessons/${id}/refresh`, { method: 'POST', signal: controller.signal });
@@ -52,14 +53,25 @@ export default function PlayerPage() {
 
   useEffect(() => { void loadLesson(lessonId); return () => { requestVersion.current += 1; lessonAbortRef.current?.abort(); }; }, [lessonId, loadLesson]);
 
+  const refreshPlayback = useCallback(async () => {
+    setMediaReady(false); setBuffering(true); setPlaybackHint('视频暂时不可用，正在重新获取播放链接…');
+    try {
+      const next = await api<LessonManifest>(`/api/lessons/${lessonId}/refresh`, { method: 'POST' });
+      if (activeLessonRef.current === lessonId && next.lesson.id === lessonId) setManifest(next);
+    } catch {
+      if (activeLessonRef.current === lessonId) { setBuffering(false); setPlaybackHint('视频暂时不可用，字幕仍可阅读。请稍后重新连接。'); }
+    }
+  }, [lessonId]);
+
   useEffect(() => {
     const video = videoRef.current; const mediaUrl = manifest?.playback?.mediaUrl;
-    if (!video || !mediaUrl) return;
-    let refreshAttempted = false; video.pause(); video.removeAttribute('src'); video.load(); setIsPlaying(false); setBuffering(true);
-    const fail = (message: string) => { setError(message); setStatus('error'); };
-    const restore = () => { if (manifest.progress.positionSeconds > 0 && manifest.progress.positionSeconds < video.duration - 2) video.currentTime = manifest.progress.positionSeconds; setDuration(video.duration || manifest.lesson.duration || 0); setBuffering(false); };
-    const onError = () => fail('媒体加载失败；链接可能已过期，可以重新解析后重试。');
-    video.addEventListener('loadedmetadata', restore); video.addEventListener('error', onError);
+    if (!video || !mediaUrl) { setMediaReady(false); return; }
+    let refreshAttempted = false; video.pause(); video.removeAttribute('src'); video.load(); setIsPlaying(false); setBuffering(true); setMediaReady(false); setPlaybackHint('');
+    const fail = (message: string) => { setMediaReady(false); setBuffering(false); setPlaybackHint(message); };
+    const restore = () => { if (manifest.progress.positionSeconds > 0 && manifest.progress.positionSeconds < video.duration - 2) video.currentTime = manifest.progress.positionSeconds; setDuration(video.duration || manifest.lesson.duration || 0); };
+    const ready = () => { setMediaReady(true); setBuffering(false); setPlaybackHint(''); };
+    const onError = () => fail('视频暂时不可用，字幕仍可阅读。请重新连接后再播放。');
+    video.addEventListener('loadedmetadata', restore); video.addEventListener('canplay', ready); video.addEventListener('error', onError);
     if (/\.m3u8(?:$|\?)/i.test(mediaUrl) && video.canPlayType('application/vnd.apple.mpegurl')) video.src = mediaUrl;
     else if (/\.m3u8(?:$|\?)/i.test(mediaUrl) && Hls.isSupported()) {
       const hls = new Hls({ enableWorker: true, maxBufferLength: 30 }); hlsRef.current = hls; hls.loadSource(mediaUrl); hls.attachMedia(video);
@@ -67,20 +79,25 @@ export default function PlayerPage() {
         if (!info.fatal) return;
         if (info.type === Hls.ErrorTypes.NETWORK_ERROR && !refreshAttempted) { refreshAttempted = true; hls.startLoad(); }
         else if (info.type === Hls.ErrorTypes.MEDIA_ERROR && !refreshAttempted) { refreshAttempted = true; hls.recoverMediaError(); }
-        else { hls.destroy(); void loadLesson(lessonId, true); }
+        else { hls.destroy(); fail('视频暂时不可用，正在重新获取播放链接…'); void refreshPlayback(); }
       });
     } else video.src = mediaUrl;
-    return () => { video.removeEventListener('loadedmetadata', restore); video.removeEventListener('error', onError); hlsRef.current?.destroy(); hlsRef.current = null; };
+    return () => { video.removeEventListener('loadedmetadata', restore); video.removeEventListener('canplay', ready); video.removeEventListener('error', onError); hlsRef.current?.destroy(); hlsRef.current = null; };
   // Media must only be rebuilt when the playback token changes.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [manifest?.playback?.mediaUrl, lessonId, loadLesson]);
+  }, [manifest?.playback?.mediaUrl, lessonId, refreshPlayback]);
 
   const playCue = useCallback((index: number, nextPhase: Phase = 'listening') => {
     const video = videoRef.current; const cue = manifest?.cues[index]; if (!video || !cue) return;
+    activeRef.current = index; setActiveIndex(index); handledEnd.current = false;
+    if (!mediaReady || video.readyState < HTMLMediaElement.HAVE_FUTURE_DATA) {
+      setPhase('idle'); setPlaybackHint(manifest?.playback ? '视频正在缓冲，字幕已就绪；请稍候再点击本句播放。' : '正在获取视频播放链接，字幕可以先阅读。');
+      return;
+    }
     if (nextPhase === 'listening') { repeatIndexRef.current = 0; setRepeatIndex(0); }
-    activeRef.current = index; setActiveIndex(index); handledEnd.current = false; setPhase(nextPhase); video.currentTime = cue.start + .02;
-    video.play().catch((reason: Error) => { setError(`浏览器阻止了播放：${reason.message}`); setStatus('error'); });
-  }, [manifest?.cues, setPhase]);
+    setPhase(nextPhase); video.currentTime = cue.start + .02;
+    video.play().catch(() => { setPhase('idle'); setPlaybackHint(video.readyState < HTMLMediaElement.HAVE_FUTURE_DATA ? '视频正在缓冲，字幕已就绪；请稍候再点击本句播放。' : '视频暂时无法开始播放，请稍后重试。'); });
+  }, [manifest?.cues, manifest?.playback, mediaReady, setPhase]);
 
   const onTimeUpdate = useCallback(() => {
     const video = videoRef.current; if (!video || !manifest) return; const time = video.currentTime; setCurrentTime(time);
@@ -113,7 +130,7 @@ export default function PlayerPage() {
   }, [lessonId]);
   useEffect(() => { if (!manifest) return; const timer = window.setInterval(() => void persistProgress(), 10_000); return () => { window.clearInterval(timer); void persistProgress(); void refresh(); }; }, [manifest, persistProgress, refresh]);
 
-  const togglePlay = () => { const video = videoRef.current; if (!video || !manifest?.cues.length) return; if (video.paused) { if (studyMode && ['idle', 'ready'].includes(phaseRef.current)) playCue(activeRef.current); else video.play().catch((reason: Error) => setError(reason.message)); } else video.pause(); };
+  const togglePlay = () => { const video = videoRef.current; if (!video || !manifest?.cues.length) return; if (video.paused) { if (!mediaReady || video.readyState < HTMLMediaElement.HAVE_FUTURE_DATA) { setPlaybackHint(manifest.playback ? '视频正在缓冲，字幕已就绪；请稍候再点击播放。' : '正在获取视频播放链接，字幕可以先阅读。'); return; } if (studyMode && ['idle', 'ready'].includes(phaseRef.current)) playCue(activeRef.current); else video.play().catch(() => setPlaybackHint('视频暂时无法开始播放，请稍后重试。')); } else video.pause(); };
   const goEpisode = (offset: number) => { const target = selectedCourse?.lessons[lessonIndex + offset]; if (target) { void persistProgress(); navigate(`/learn/${target.id}`); } };
   const changeCourse = (courseId: string) => { const course = data!.courses.find((item) => item.id === courseId); if (course?.lessons[0]) { void updateSettings({ selectedCourseId: course.id }); navigate(`/learn/${course.lessons[0].id}`); } else notify('这个课程还没有学习内容'); };
 
@@ -158,18 +175,19 @@ export default function PlayerPage() {
   if (status === 'error' || !manifest) return <main className="lesson-loading error-state"><AlertCircle /><strong>本课时暂时无法打开</strong><span>{error}</span><button onClick={() => void loadLesson(lessonId, true)}><RotateCcw size={15} />重新解析</button></main>;
   const cue = manifest.cues[activeIndex];
   return <main className="workspace">
-      <TranscriptPanel cues={manifest.cues} activeIndex={activeIndex} query={query} setQuery={setQuery} onCue={(index) => playCue(index)} vocabulary={data!.vocabulary} tab={tab} setTab={setTab} dictionary={dictionary} dictionaryLoading={dictionaryLoading} inspectedWord={inspectedWord} inspectedPhrase={inspectedPhrase} tooltip={tooltip} onWordHover={inspectWord} onWordLeave={() => setTooltip(null)} onWordToggle={(word) => void toggleWord(word)} onPhraseHover={inspectPhrase} onPhraseSelection={selectPhrase} onPhraseRemove={(phrase) => void removePhrase(phrase)} onPhraseEdit={editPhrase} onTranslate={(cueId) => void translateSentence(cueId)} translatingCueIds={translatingCueIds} onReview={() => navigate('/review/0')} onNotify={notify} translationLabel={translationLabel} />
+      <TranscriptPanel cues={manifest.cues} activeIndex={activeIndex} query={query} setQuery={setQuery} onCue={(index) => playCue(index)} vocabulary={data!.vocabulary} tab={tab} setTab={setTab} dictionary={dictionary} dictionaryLoading={dictionaryLoading} inspectedWord={inspectedWord} inspectedPhrase={inspectedPhrase} tooltip={tooltip} onWordHover={inspectWord} onWordLeave={() => setTooltip(null)} onWordToggle={(word) => void toggleWord(word)} onPhraseHover={inspectPhrase} onPhraseSelection={selectPhrase} onPhraseRemove={(phrase) => void removePhrase(phrase)} onPhraseEdit={editPhrase} onTranslate={(cueId) => void translateSentence(cueId)} translatingCueIds={translatingCueIds} onReview={() => navigate('/learn/review/0')} onNotify={notify} translationLabel={translationLabel} />
       <section className="player-column">
         <div className="player-import"><input value={importUrl} onChange={(event) => setImportUrl(event.target.value)} onKeyDown={(event) => event.key === 'Enter' && void importLesson()} placeholder="粘贴公开课时网址" aria-label="课程网址" /><button onClick={() => void importLesson()} disabled={importing}>{importing ? <LoaderCircle className="spin" /> : <Import size={15} />}{importing ? '解析中' : '导入'}</button></div>
         <div className="lesson-heading"><div><span className="eyebrow">{selectedCourse?.name || '未分类课程'} · 第 {lessonIndex + 1} 集</span><h1>{manifest.lesson.title}</h1></div><div className="lesson-side"><div className="course-actions"><select value={selectedCourse?.id || ''} onChange={(event) => changeCourse(event.target.value)} aria-label="选择课程">{data!.courses.map((course) => <option value={course.id} key={course.id}>{course.name} ({course.lessons.length})</option>)}</select><button className="save-course-button" onClick={async () => { if (!selectedCourse) return; await api(`/api/courses/${selectedCourse.id}/lessons`, { method: 'POST', ...jsonBody({ sourceUrl: manifest.lesson.sourceUrl, lessonId: manifest.lesson.id }) }); await refresh(); notify('已保存到课程，重复内容不会再次添加'); }}><Save size={14} />保存到课程</button></div><div className="episode-navigation"><button disabled={lessonIndex <= 0} onClick={() => goEpisode(-1)}><ChevronLeft size={15} />上一集</button><span>{lessonIndex >= 0 ? `${lessonIndex + 1} / ${selectedCourse.lessons.length}` : '未加入课程'}</span><button disabled={lessonIndex < 0 || lessonIndex >= selectedCourse.lessons.length - 1} onClick={() => goEpisode(1)}>下一集<ChevronRight size={15} /></button></div></div></div>
         <div className={`video-stage ${videoHidden ? 'video-hidden' : ''}`}>
-          <video ref={videoRef} crossOrigin="anonymous" playsInline onClick={togglePlay} onTimeUpdate={onTimeUpdate} onPlay={() => setIsPlaying(true)} onPause={() => setIsPlaying(false)} onWaiting={() => setBuffering(true)} onPlaying={() => setBuffering(false)} />
+          <video ref={videoRef} crossOrigin="anonymous" playsInline onClick={togglePlay} onTimeUpdate={onTimeUpdate} onPlay={() => setIsPlaying(true)} onPause={() => setIsPlaying(false)} onWaiting={() => { setBuffering(true); setMediaReady(false); }} onPlaying={() => { setIsPlaying(true); setBuffering(false); setMediaReady(true); setPlaybackHint(''); }} />
           {videoHidden && <button className="audio-only" onClick={togglePlay}><EyeOff /><span>仅听音频</span><strong>{manifest.lesson.title}</strong></button>}
           {!videoHidden && !isPlaying && !buffering && <button className="big-play" onClick={togglePlay} aria-label="播放"><Play fill="currentColor" /></button>}
           {buffering && <div className="stage-status"><LoaderCircle className="spin" />缓冲中</div>}
           {phase !== 'idle' && <div className={`stage-status ${phase === 'pause' ? 'counting' : ''}`}>{phase === 'pause' ? <><span className="countdown-number">{countdown}</span>复述原句 · 下一次 {repeatIndex + 1}/{repeatCount}</> : phase === 'repeat' ? `重复原句 ${repeatIndex}/${repeatCount}` : ({ listening: '听原句', ready: '点击下一句' } as Record<string,string>)[phase]}</div>}
         </div>
         <div className="transport"><button className="play-button" onClick={togglePlay} aria-label={isPlaying ? '暂停' : '播放'}>{isPlaying ? <Pause fill="currentColor" /> : <Play fill="currentColor" />}</button><span className="timecode">{formatTime(currentTime)} / {formatTime(duration || manifest.lesson.duration || 0)}</span><input className="timeline" type="range" min="0" max={duration || manifest.lesson.duration || 0} step="0.1" value={currentTime} onChange={(event) => { const time = Number(event.target.value); if (videoRef.current) videoRef.current.currentTime = time; setCurrentTime(time); }} aria-label="播放进度" /><Volume2 className="volume-icon" size={16} /><input className="volume" type="range" min="0" max="1" step=".05" value={volume} onChange={(event) => { const value = Number(event.target.value); setVolume(value); if (videoRef.current) videoRef.current.volume = value; }} aria-label="音量" /><button className="speed-button" onClick={() => { const values = [.75, 1, 1.25, 1.5, 2]; const next = values[(values.indexOf(speed) + 1) % values.length]; setSpeed(next); if (videoRef.current) videoRef.current.playbackRate = next; }}>{speed}×</button><button className="icon-button" onClick={() => void updateSettings({ videoHidden: !videoHidden })} aria-label={videoHidden ? '显示视频' : '隐藏视频'}>{videoHidden ? <Eye /> : <EyeOff />}</button><button className="icon-button" onClick={() => videoRef.current?.requestFullscreen()} aria-label="全屏"><Maximize /></button></div>
+        {playbackHint && <div className="media-playback-notice" role="status" aria-live="polite">{buffering && <LoaderCircle className="spin" size={14} />}<span>{playbackHint}</span>{!buffering && <button onClick={() => void refreshPlayback()}><RotateCcw size={13} />重新连接</button>}</div>}
         <div className="study-bar"><label className="mode-toggle"><input type="checkbox" checked={studyMode} onChange={(event) => { setStudyMode(event.target.checked); repeatIndexRef.current = 0; setRepeatIndex(0); setPhase('idle'); }} /><span className="toggle-track"><span /></span><span><strong>学习模式</strong><small>听一句 · 复述 · 重复 {repeatCount} 次</small></span></label><div className="wait-setting" title="复述时间"><span>复述时间</span><button disabled={waitSeconds <= 1} aria-label="减少复述时间" onClick={() => void updateSettings({ waitSeconds: Math.max(1, waitSeconds - 1) })}>−</button><strong>{waitSeconds}s</strong><button disabled={waitSeconds >= 15} aria-label="增加复述时间" onClick={() => void updateSettings({ waitSeconds: Math.min(15, waitSeconds + 1) })}>+</button></div><div className="wait-setting repeat-setting" title="重复次数"><span>重复次数</span><button disabled={repeatCount <= 0} aria-label="减少重复次数" onClick={() => void updateSettings({ repeatCount: Math.max(0, repeatCount - 1) })}>−</button><strong>{repeatCount}次</strong><button disabled={repeatCount >= 9} aria-label="增加重复次数" onClick={() => void updateSettings({ repeatCount: Math.min(9, repeatCount + 1) })}>+</button></div><div className="study-actions"><button className="secondary-button" disabled={activeIndex <= 0} onClick={() => playCue(activeIndex - 1)}><RotateCcw size={14} />上一句</button><button className="next-button" disabled={activeIndex >= manifest.cues.length - 1} onClick={() => playCue(activeIndex + 1)}><SkipForward size={14} />下一句</button></div></div>
         <div className="current-sentence"><div className="sentence-kicker"><Languages size={14} />当前句 · {activeIndex + 1}/{manifest.cues.length} · {translationLabel}</div><div className="sentence-grid"><div className="sentence-en"><p>{cue?.en || '本集没有可用的英文字幕'}</p></div><div className="sentence-zh">{cue?.zh ? <p>{cue.zh}</p> : cue && <button className="translate-cue-button" disabled={translatingCueIds.has(cue.id)} onClick={() => void translateSentence(cue.id)}>{translatingCueIds.has(cue.id) ? <LoaderCircle className="spin" /> : <Languages />}{translatingCueIds.has(cue.id) ? '免费翻译中' : '免费翻译本句'}</button>}</div></div></div>
       </section>

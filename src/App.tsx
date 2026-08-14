@@ -18,11 +18,12 @@ export default function App() {
     <AppHeader onStats={() => setStatsOpen(true)} />
     <Suspense fallback={<div className="route-loading"><LoaderCircle className="spin" />正在加载…</div>}>
       <Routes>
-        <Route path="/" element={<Navigate to={data.settings.currentLessonId ? `/learn/${data.settings.currentLessonId}` : (firstLesson ? `/learn/${firstLesson}` : '/courses')} replace />} />
+        <Route path="/" element={<Navigate to="/learn" replace />} />
+        <Route path="/learn" element={<Navigate to={data.settings.currentLessonId ? `/learn/${data.settings.currentLessonId}` : (firstLesson ? `/learn/${firstLesson}` : '/learn/courses')} replace />} />
         <Route path="/learn/:lessonId" element={<PlayerPage />} />
-        <Route path="/courses" element={<CoursesPage />} />
-        <Route path="/review/:group" element={<ReviewPage />} />
-        <Route path="*" element={<Navigate to="/" replace />} />
+        <Route path="/learn/courses" element={<CoursesPage />} />
+        <Route path="/learn/review/:group" element={<ReviewPage />} />
+        <Route path="*" element={<Navigate to="/learn" replace />} />
       </Routes>
     </Suspense>
     <StatsModal open={statsOpen} onClose={() => setStatsOpen(false)} />
