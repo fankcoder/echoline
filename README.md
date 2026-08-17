@@ -59,7 +59,14 @@ https://anhao.net/learn/api/auth/google/callback
 
 本地默认使用根路径，对应 `http://127.0.0.1:5173/api/auth/github/callback` 和 `http://127.0.0.1:5173/api/auth/google/callback`。OAuth 密钥只保存在服务器环境变量中，不会返回浏览器、写入 `localStorage` 或提交到 Git。
 
-OAuth 回调由服务器交换授权码，因此生产服务器必须能通过 HTTPS 访问 `oauth2.googleapis.com`、`openidconnect.googleapis.com`、`github.com` 和 `api.github.com`。当前服务器无法直连这些地址时，即使浏览器已完成授权也不会创建登录会话；需要为服务器开放出网，或配置可用的 HTTPS 代理后再重试。
+OAuth 回调由服务器交换授权码，因此生产服务器必须能通过 HTTPS 访问 `oauth2.googleapis.com`、`openidconnect.googleapis.com`、`github.com` 和 `api.github.com`。当前服务器无法直连这些地址时，即使浏览器已完成授权也不会创建登录会话；需要为服务器开放出网，或在 `.env` 设置可用代理后重启：
+
+```bash
+HTTPS_PROXY=http://代理地址:端口
+NO_PROXY=127.0.0.1,localhost
+```
+
+启动命令已启用 Node 的 `--use-env-proxy`，会将该代理用于 OAuth 请求；代理凭据请只存于服务器 `.env`。
 
 从旧版无账户服务升级时，如服务器 `data/echoline.db` 已有全局生词本，可在首次上线前临时配置 `LEGACY_VOCABULARY_OWNER_EMAIL=你的注册邮箱`。该邮箱首次登录后，旧数据会一次性复制到该账户；未设置时旧数据保留在数据库备份中但不会展示给任何账户，以避免误泄露。
 

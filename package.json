@@ -4,10 +4,10 @@
   "version": "1.0.0",
   "type": "module",
   "scripts": {
-    "dev": "concurrently -k -n api,web -c green,cyan \"node --env-file-if-exists=.env --import tsx --watch server/index.ts\" \"vite\"",
+    "dev": "concurrently -k -n api,web -c green,cyan \"node --use-env-proxy --env-file-if-exists=.env --import tsx --watch server/index.ts\" \"vite\"",
     "dev:e2e": "concurrently -k -n api,web -c green,cyan \"PORT=4174 ECHOLINE_DB=:memory: node --import tsx server/index.ts\" \"VITE_API_PORT=4174 vite --port 5174 --strictPort\"",
     "build": "tsc -b && vite build",
-    "start": "NODE_ENV=production node --env-file-if-exists=.env --import tsx server/index.ts",
+    "start": "NODE_ENV=production node --use-env-proxy --env-file-if-exists=.env --import tsx server/index.ts",
     "typecheck": "tsc -b --pretty false",
     "test": "vitest run",
     "test:watch": "vitest",
