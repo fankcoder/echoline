@@ -51,6 +51,18 @@ export const vocabularySyncSchema = z.object({
   })).max(5000),
 });
 
+export const favoriteExampleSchema = z.object({
+  lessonId: z.string().uuid(), cueId: z.string().trim().min(1).max(160), courseId: z.string().trim().min(1).max(120).optional(),
+});
+export const favoriteExampleSyncSchema = z.object({
+  items: z.array(z.object({
+    id: z.string().trim().min(1).max(120).optional(), lessonId: z.string().uuid(), cueId: z.string().trim().min(1).max(160),
+    sentence: z.string().trim().min(1).max(4000), translation: z.string().trim().min(1).max(4000),
+    courseName: z.string().trim().max(200).optional(), lessonTitle: z.string().trim().max(500).optional(), sourceUrl: z.string().trim().max(4000),
+    startSeconds: z.number().finite().min(0).optional(), createdAt: z.number().finite().optional(),
+  })).max(5000),
+});
+
 export type Cue = { id: string; start: number; end: number; en: string; zh: string | null };
 
 export type PublicLesson = {

@@ -7,7 +7,7 @@ import { TranscriptPanel } from '../components/TranscriptPanel';
 import { YouTubePlayer, type YouTubePlayerHandle } from '../components/YouTubePlayer';
 import { useAppState } from '../state/AppState';
 import { normalizeRepeatCount, phaseAfterCue } from '../studyMode';
-import type { DictionaryEntry, LessonManifest, VocabularyItem } from '../types';
+import type { Cue, DictionaryEntry, LessonManifest, VocabularyItem } from '../types';
 
 type Phase = 'idle' | 'listening' | 'pause' | 'repeat' | 'ready';
 type PhraseDraft = { normalized?: string; text: string; cueId: string | null; meaning: string; note: string; example: string };
@@ -15,7 +15,7 @@ const formatTime = (seconds: number) => `${String(Math.floor(seconds / 60)).padS
 
 export default function PlayerPage() {
   const { lessonId = '' } = useParams(); const navigate = useNavigate();
-  const { data, refresh, updateSettings, toggleVocabulary: toggleSavedVocabulary, savePhrase: saveSavedPhrase, removePhrase: removeSavedPhrase, notify } = useAppState();
+  const { data, refresh, updateSettings, toggleVocabulary: toggleSavedVocabulary, savePhrase: saveSavedPhrase, removePhrase: removeSavedPhrase, saveFavoriteExample, removeFavoriteExample, notify } = useAppState();
   const videoRef = useRef<HTMLVideoElement>(null); const youtubeRef = useRef<YouTubePlayerHandle>(null); const requestVersion = useRef(0); const hlsRef = useRef<Hls | null>(null);
   const lessonAbortRef = useRef<AbortController | null>(null); const activeLessonRef = useRef(lessonId);
   const phaseRef = useRef<Phase>('idle'); const activeRef = useRef(0); const handledEnd = useRef(false); const repeatIndexRef = useRef(0);
@@ -24,9 +24,10 @@ export default function PlayerPage() {
   const [isPlaying, setIsPlaying] = useState(false); const [buffering, setBuffering] = useState(false); const [currentTime, setCurrentTime] = useState(0); const [duration, setDuration] = useState(0);
   const [mediaReady, setMediaReady] = useState(false); const [playbackHint, setPlaybackHint] = useState('');
   const [activeIndex, setActiveIndex] = useState(0); const [phase, setPhaseState] = useState<Phase>('idle'); const [countdown, setCountdown] = useState(0); const [repeatIndex, setRepeatIndex] = useState(0); const [studyMode, setStudyMode] = useState(true);
-  const [speed, setSpeed] = useState(1); const [volume, setVolume] = useState(.85); const [query, setQuery] = useState(''); const [tab, setTab] = useState<'transcript' | 'vocabulary'>('transcript');
+  const [speed, setSpeed] = useState(1); const [volume, setVolume] = useState(.85); const [query, setQuery] = useState(''); const [tab, setTab] = useState<'transcript' | 'vocabulary' | 'favorites'>('transcript');
   const [importUrl, setImportUrl] = useState(''); const [importing, setImporting] = useState(false); const [dictionary, setDictionary] = useState<DictionaryEntry | null>(null); const [dictionaryLoading, setDictionaryLoading] = useState(false); const [inspectedWord, setInspectedWord] = useState(''); const [tooltip, setTooltip] = useState<{ x: number; y: number; above: boolean } | null>(null);
   const [translatingCueIds, setTranslatingCueIds] = useState<Set<string>>(() => new Set());
+  const [savingFavoriteCueIds, setSavingFavoriteCueIds] = useState<Set<string>>(() => new Set());
   const [inspectedPhrase, setInspectedPhrase] = useState<VocabularyItem | null>(null); const [phraseDraft, setPhraseDraft] = useState<PhraseDraft | null>(null);
   const youtubeVideoId = manifest?.playback?.kind === 'youtube' ? manifest.playback.videoId : null;
   const isYouTubePlayback = Boolean(youtubeVideoId);
@@ -43,7 +44,7 @@ export default function PlayerPage() {
     lessonAbortRef.current?.abort(); const controller = new AbortController(); lessonAbortRef.current = controller;
     const version = ++requestVersion.current;
     videoRef.current?.pause(); youtubeRef.current?.pause(); hlsRef.current?.destroy(); hlsRef.current = null;
-    setManifest(null); setStatus('loading'); setError(''); setQuery(''); setCurrentTime(0); setDuration(0); setMediaReady(false); setPlaybackHint(''); setActiveIndex(0); activeRef.current = 0; repeatIndexRef.current = 0; setRepeatIndex(0); setPhase('idle'); setCountdown(0); setTranslatingCueIds(new Set()); completedRef.current = new Set(); progressDelta.current = { playback: 0, session: 0 };
+    setManifest(null); setStatus('loading'); setError(''); setQuery(''); setCurrentTime(0); setDuration(0); setMediaReady(false); setPlaybackHint(''); setActiveIndex(0); activeRef.current = 0; repeatIndexRef.current = 0; setRepeatIndex(0); setPhase('idle'); setCountdown(0); setTranslatingCueIds(new Set()); setSavingFavoriteCueIds(new Set()); completedRef.current = new Set(); progressDelta.current = { playback: 0, session: 0 };
     try {
       let result = await api<LessonManifest>(force ? `/api/lessons/${id}/refresh` : `/api/lessons/${id}`, { method: force ? 'POST' : 'GET', signal: controller.signal });
       if ((!result.playback || result.lesson.importStatus !== 'ready') && !force) result = await api<LessonManifest>(`/api/lessons/${id}/refresh`, { method: 'POST', signal: controller.signal });
@@ -197,6 +198,25 @@ export default function PlayerPage() {
     } catch (reason) { notify((reason as Error).message); }
     finally { setTranslatingCueIds((ids) => { const next = new Set(ids); next.delete(cueId); return next; }); }
   };
+  const toggleFavoriteExample = async (favoriteCue: Cue) => {
+    if (!favoriteCue.zh || savingFavoriteCueIds.has(favoriteCue.id) || !manifest) return;
+    setSavingFavoriteCueIds((ids) => new Set(ids).add(favoriteCue.id));
+    const saved = data!.favoriteExamples.find((item) => item.lessonId === lessonId && item.cueId === favoriteCue.id);
+    try {
+      if (saved) {
+        await removeFavoriteExample(saved.id);
+        notify('已从短句收藏移除');
+      } else {
+        await saveFavoriteExample({ lessonId, cueId: favoriteCue.id, sentence: favoriteCue.en, translation: favoriteCue.zh, courseName: selectedCourse?.name || '未分类课程', lessonTitle: manifest.lesson.title, sourceUrl: manifest.lesson.sourceUrl, startSeconds: favoriteCue.start }, selectedCourse?.id);
+        notify('已加入短句收藏');
+      }
+    } catch (reason) { notify((reason as Error).message); }
+    finally { setSavingFavoriteCueIds((ids) => { const next = new Set(ids); next.delete(favoriteCue.id); return next; }); }
+  };
+  const removeSavedFavoriteExample = async (id: string) => {
+    try { await removeFavoriteExample(id); notify('已从短句收藏移除'); }
+    catch (reason) { notify((reason as Error).message); }
+  };
   const translatedCount = manifest?.cues.filter((item) => item.zh).length || 0;
   const translationLabel = manifest?.captionSource === 'official' ? '官方' : `${translatedCount} 条已缓存 · 免费按需`;
 
@@ -204,7 +224,7 @@ export default function PlayerPage() {
   if (status === 'error' || !manifest) return <main className="lesson-loading error-state"><AlertCircle /><strong>本课时暂时无法打开</strong><span>{error}</span><button onClick={() => void loadLesson(lessonId, true)}><RotateCcw size={15} />重新解析</button></main>;
   const cue = manifest.cues[activeIndex];
   return <main className="workspace">
-      <TranscriptPanel cues={manifest.cues} activeIndex={activeIndex} query={query} setQuery={setQuery} onCue={(index) => playCue(index)} vocabulary={data!.vocabulary} tab={tab} setTab={setTab} dictionary={dictionary} dictionaryLoading={dictionaryLoading} inspectedWord={inspectedWord} inspectedPhrase={inspectedPhrase} tooltip={tooltip} onWordHover={inspectWord} onWordLeave={() => setTooltip(null)} onWordToggle={(word) => void toggleWord(word)} onPhraseHover={inspectPhrase} onPhraseSelection={selectPhrase} onPhraseRemove={(phrase) => void removePhrase(phrase)} onPhraseEdit={editPhrase} onTranslate={(cueId) => void translateSentence(cueId)} translatingCueIds={translatingCueIds} onReview={() => navigate('/learn/review/0')} onNotify={notify} translationLabel={translationLabel} />
+      <TranscriptPanel cues={manifest.cues} activeIndex={activeIndex} query={query} setQuery={setQuery} onCue={(index) => playCue(index)} vocabulary={data!.vocabulary} favoriteExamples={data!.favoriteExamples} favoriteCueIds={new Set(data!.favoriteExamples.filter((item) => item.lessonId === lessonId).map((item) => item.cueId))} favoriteSavingCueIds={savingFavoriteCueIds} tab={tab} setTab={setTab} dictionary={dictionary} dictionaryLoading={dictionaryLoading} inspectedWord={inspectedWord} inspectedPhrase={inspectedPhrase} tooltip={tooltip} onWordHover={inspectWord} onWordLeave={() => setTooltip(null)} onWordToggle={(word) => void toggleWord(word)} onPhraseHover={inspectPhrase} onPhraseSelection={selectPhrase} onPhraseRemove={(phrase) => void removePhrase(phrase)} onPhraseEdit={editPhrase} onTranslate={(cueId) => void translateSentence(cueId)} onFavoriteToggle={(favoriteCue) => void toggleFavoriteExample(favoriteCue)} onFavoriteRemove={(id) => void removeSavedFavoriteExample(id)} translatingCueIds={translatingCueIds} onReview={() => navigate('/learn/review/0')} onNotify={notify} translationLabel={translationLabel} />
       <section className="player-column">
         <div className="player-import"><input value={importUrl} onChange={(event) => setImportUrl(event.target.value)} onKeyDown={(event) => event.key === 'Enter' && void importLesson()} placeholder="粘贴 DeepLearning.AI 或 YouTube 视频网址" aria-label="课程网址" /><button onClick={() => void importLesson()} disabled={importing}>{importing ? <LoaderCircle className="spin" /> : <Import size={15} />}{importing ? '解析中' : '导入'}</button></div>
         <div className="lesson-heading"><div><span className="eyebrow">{selectedCourse?.name || '未分类课程'} · 第 {lessonIndex + 1} 集</span><h1>{manifest.lesson.title}</h1></div><div className="lesson-side"><div className="course-actions"><select value={selectedCourse?.id || ''} onChange={(event) => changeCourse(event.target.value)} aria-label="选择课程">{data!.courses.map((course) => <option value={course.id} key={course.id}>{course.name} ({course.lessons.length})</option>)}</select><button className="save-course-button" onClick={async () => { if (!selectedCourse) return; await api(`/api/courses/${selectedCourse.id}/lessons`, { method: 'POST', ...jsonBody({ sourceUrl: manifest.lesson.sourceUrl, lessonId: manifest.lesson.id }) }); await refresh(); notify('已保存到课程，重复内容不会再次添加'); }}><Save size={14} />保存到课程</button></div><div className="episode-navigation"><button disabled={lessonIndex <= 0} onClick={() => goEpisode(-1)}><ChevronLeft size={15} />上一集</button><span>{lessonIndex >= 0 ? `${lessonIndex + 1} / ${selectedCourse.lessons.length}` : '未加入课程'}</span><button disabled={lessonIndex < 0 || lessonIndex >= selectedCourse.lessons.length - 1} onClick={() => goEpisode(1)}>下一集<ChevronRight size={15} /></button></div></div></div>

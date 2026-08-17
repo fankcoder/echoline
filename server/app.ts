@@ -7,7 +7,7 @@ import { lookupWord, searchDictionary } from './dictionary.js';
 import { resolveLessonAssets, RESOLVER_VERSION } from './resolver.js';
 import { translateCue } from './translation.js';
 import { appHomePath, authenticateOAuthUser, clearCookie, cookie, cookieValue, exchangeOAuthProfile, hashPassword, isOAuthNetworkError, normalizeEmail, oauthCookieName, sessionCookieName, sessionExpiry, sessionToken, startOAuth, verifyPassword, type OAuthProvider } from './auth.js';
-import { addLessonSchema, createCourseSchema, loginSchema, phraseSchema, phraseUpdateSchema, progressSchema, registerSchema, reorderSchema, resolveLessonSchema, settingsSchema, updateCourseSchema, vocabularySchema, vocabularySyncSchema } from './types.js';
+import { addLessonSchema, createCourseSchema, favoriteExampleSchema, favoriteExampleSyncSchema, loginSchema, phraseSchema, phraseUpdateSchema, progressSchema, registerSchema, reorderSchema, resolveLessonSchema, settingsSchema, updateCourseSchema, vocabularySchema, vocabularySyncSchema } from './types.js';
 
 type PlaybackAsset = ({ kind: 'hls'; mediaUrl: string } | { kind: 'youtube'; videoId: string }) & { resolvedAt: number; resolverVersion: string };
 const playbackAssets = new Map<string, PlaybackAsset>();
@@ -58,7 +58,7 @@ export async function buildApp(options: { database?: EchoDatabase; production?: 
   };
   const requireUser = (request: FastifyRequest) => {
     const user = authUser(request);
-    if (!user) throw new HttpError(401, 'AUTH_REQUIRED', '请先登录后再使用云端生词本');
+    if (!user) throw new HttpError(401, 'AUTH_REQUIRED', '请先登录后再使用云端收藏');
     return user;
   };
 
@@ -128,11 +128,11 @@ export async function buildApp(options: { database?: EchoDatabase; production?: 
   });
   app.get('/api/bootstrap', async (request) => {
     const user = authUser(request);
-    if (user && normalizeEmail(process.env.LEGACY_VOCABULARY_OWNER_EMAIL || '') === user.email) db.claimLegacyVocabulary(user.id);
-    const courses = db.listCourses(); const vocabulary = user ? db.listVocabulary(user.id) : []; const settings = db.getSettings();
+    if (user && normalizeEmail(process.env.LEGACY_VOCABULARY_OWNER_EMAIL || '') === user.email) { db.claimLegacyVocabulary(user.id); db.claimLegacyFavoriteExamples(user.id); }
+    const courses = db.listCourses(); const vocabulary = user ? db.listVocabulary(user.id) : []; const favoriteExamples = user ? db.listFavoriteExamples(user.id) : []; const settings = db.getSettings();
     const statsRows = db.db.prepare('SELECT * FROM study_progress').all() as any[];
     const stats = { playbackSeconds: statsRows.reduce((sum, row) => sum + row.playback_seconds, 0), sessionSeconds: statsRows.reduce((sum, row) => sum + row.session_seconds, 0), learnedLessons: statsRows.filter((row) => JSON.parse(row.completed_cue_ids).length > 0).length };
-    return { user, courses, vocabulary, settings, stats, migrationVersion: 4 };
+    return { user, courses, vocabulary, favoriteExamples, settings, stats, migrationVersion: 5 };
   });
 
   app.post('/api/lessons/resolve', async (request, reply) => {
@@ -203,6 +203,10 @@ export async function buildApp(options: { database?: EchoDatabase; production?: 
   app.get('/api/vocabulary', async (request) => db.listVocabulary(requireUser(request).id));
   app.post('/api/vocabulary/toggle', async (request) => { const user = requireUser(request); const input = vocabularySchema.parse(request.body); return { saved: db.toggleVocabulary(input.word, input.lessonId, input.cueId, user.id), vocabulary: db.listVocabulary(user.id) }; });
   app.post('/api/vocabulary/sync', async (request) => { const user = requireUser(request); return { vocabulary: db.syncUserVocabulary(user.id, vocabularySyncSchema.parse(request.body).items) }; });
+  app.get('/api/favorite-examples', async (request) => ({ favoriteExamples: db.listFavoriteExamples(requireUser(request).id) }));
+  app.post('/api/favorite-examples', async (request) => { const user = requireUser(request); const input = favoriteExampleSchema.parse(request.body); return db.addFavoriteExample(user.id, input.lessonId, input.cueId, input.courseId); });
+  app.post('/api/favorite-examples/sync', async (request) => { const user = requireUser(request); return { favoriteExamples: db.syncUserFavoriteExamples(user.id, favoriteExampleSyncSchema.parse(request.body).items) }; });
+  app.delete('/api/favorite-examples/:id', async (request, reply) => { const user = requireUser(request); const { id } = z.object({ id: z.string().uuid() }).parse(request.params); if (!db.removeFavoriteExample(user.id, id)) return reply.code(404).send({ error: { code: 'NOT_FOUND', message: '短句收藏不存在' } }); return { favoriteExamples: db.listFavoriteExamples(user.id) }; });
   app.get('/api/phrases', async (request) => db.listVocabulary(requireUser(request).id).filter((item) => item.kind === 'phrase'));
   app.post('/api/phrases', async (request) => { const user = requireUser(request); const input = phraseSchema.parse(request.body); const result = db.addPhrase(input.phrase, input.meaning, input.note, input.example, input.lessonId, input.cueId, user.id); return { ...result, vocabulary: db.listVocabulary(user.id) }; });
   app.patch('/api/phrases/:text', async (request, reply) => { const user = requireUser(request); const { text } = z.object({ text: z.string().min(2).max(160) }).parse(request.params); const input = phraseUpdateSchema.parse(request.body); const result = db.updatePhrase(text, input.phrase, input.meaning, input.note, input.example, user.id); if (result === 'not_found') return reply.code(404).send({ error: { code: 'PHRASE_NOT_FOUND', message: '短语不存在' } }); if (result === 'duplicate') return reply.code(409).send({ error: { code: 'PHRASE_EXISTS', message: '短语已存在' } }); return { ok: true, vocabulary: db.listVocabulary(user.id) }; });
@@ -221,7 +225,7 @@ export async function buildApp(options: { database?: EchoDatabase; production?: 
   app.get('/api/export', async (request, reply) => reply.header('Content-Disposition', `attachment; filename="echoline-${new Date().toISOString().slice(0,10)}.json"`).send(db.exportData(requireUser(request).id)));
   app.post('/api/import', async (request) => {
     const user = requireUser(request);
-    const input = z.object({ version: z.union([z.literal(1), z.literal(2)]), courses: z.array(z.any()), progress: z.array(z.any()).default([]), vocabulary: z.array(z.any()).default([]), settings: z.record(z.any()).default({}) }).parse(request.body);
+    const input = z.object({ version: z.union([z.literal(1), z.literal(2), z.literal(3)]), courses: z.array(z.any()), progress: z.array(z.any()).default([]), vocabulary: z.array(z.any()).default([]), favoriteExamples: z.array(z.any()).default([]), settings: z.record(z.any()).default({}) }).parse(request.body);
     const lessonMap = new Map<string, string>();
     for (const importedCourse of input.courses) {
       if (!importedCourse?.name) continue;
@@ -240,6 +244,8 @@ export async function buildApp(options: { database?: EchoDatabase; production?: 
       if (item.kind === 'phrase' && item.meaning) db.addPhrase(item.text || item.word, item.meaning, item.note, item.example, lessonMap.get(item.lessonId) || null, item.cueId, user.id);
       else db.toggleVocabulary(item.word, lessonMap.get(item.lessonId) || null, item.cueId, user.id);
     }
+    const importedFavorites = favoriteExampleSyncSchema.safeParse({ items: input.favoriteExamples });
+    if (importedFavorites.success) db.syncUserFavoriteExamples(user.id, importedFavorites.data.items.map((item) => ({ ...item, lessonId: lessonMap.get(item.lessonId) || item.lessonId })));
     db.saveSettings(input.settings);
     return { ok: true, importedCourses: input.courses.length, pendingResolution: lessonMap.size };
   });

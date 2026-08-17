@@ -457,6 +457,36 @@ button { cursor: pointer; }
 .dark-mode .dictionary-result p { color: #c0cbc6; }
 .dark-mode .dictionary-result span,.dark-mode .dictionary-state,.dark-mode .dictionary-workbench-source { color: #8f9c96; }
 
+.transcript-head,
+.cue-row { grid-template-columns: 70px minmax(0, 1.12fr) minmax(0, 1fr) 34px; }
+.cue-favorite { align-self: start; justify-self: end; display: grid; width: 28px; height: 28px; place-items: center; border: 1px solid transparent; border-radius: 4px; background: transparent; color: #98a39e; }
+.cue-favorite:hover:not(:disabled),
+.cue-favorite:focus-visible { border-color: #b9d9cc; background: var(--green-soft); color: var(--green-dark); outline: 0; }
+.cue-favorite.saved { border-color: #f3c4b9; background: #fff7f5; color: var(--coral); }
+.cue-favorite:disabled { cursor: not-allowed; opacity: .42; }
+.favorite-examples { grid-row: 2 / -1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; background: var(--white); }
+.favorite-summary { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; padding: 22px 26px 18px; border-bottom: 1px solid var(--line); background: #f7faf8; color: var(--green-dark); }
+.favorite-summary span,.favorite-summary strong,.favorite-summary small { display: block; }
+.favorite-summary span { font-size: 9px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+.favorite-summary strong { margin-top: 4px; color: var(--ink); font-size: 16px; }
+.favorite-summary small { margin-top: 5px; color: #7d8883; font-size: 10px; }
+.favorite-example-list { min-height: 0; overflow: auto; padding: 0 26px 22px; }
+.favorite-example { position: relative; padding: 19px 40px 17px 0; border-bottom: 1px solid var(--line); }
+.favorite-example-copy p { margin: 0; }
+.favorite-example-en { color: var(--ink); font-family: Georgia, 'Times New Roman', serif; font-size: 14px; line-height: 1.65; }
+.favorite-example-zh { margin-top: 7px !important; color: #60706a; font-size: 12px; line-height: 1.65; }
+.favorite-example-meta { display: flex; flex-wrap: wrap; gap: 5px 12px; margin-top: 11px; color: #8a9691; font-size: 9px; line-height: 1.45; }
+.favorite-remove { position: absolute; top: 16px; right: 0; display: grid; width: 28px; height: 28px; place-items: center; border: 1px solid transparent; border-radius: 4px; background: transparent; color: #9aa49f; }
+.favorite-remove:hover,.favorite-remove:focus-visible { border-color: #f0c3b9; background: #fff5f2; color: var(--coral); outline: 0; }
+.dark-mode .favorite-examples { background: #18201c; }
+.dark-mode .favorite-summary { border-color: var(--line); background: #141b18; }
+.dark-mode .favorite-summary strong { color: var(--ink); }
+.dark-mode .favorite-summary small,.dark-mode .favorite-example-meta { color: #8f9c96; }
+.dark-mode .favorite-example { border-color: var(--line); }
+.dark-mode .favorite-example-en { color: #dbe4df; }
+.dark-mode .favorite-example-zh { color: #b7c4bd; }
+.dark-mode .cue-favorite.saved { border-color: #75463c; background: #30211e; color: #ff9a84; }
+
 @media (max-width: 1100px) {
   .workspace { grid-template-columns: minmax(460px, 1fr) 330px; }
   .player-column { padding-right: 12px; padding-left: 12px; }
@@ -464,7 +494,7 @@ button { cursor: pointer; }
   .player-column .volume,
   .player-column .volume-icon { display: none; }
   .transcript-head,
-  .cue-row { grid-template-columns: 58px minmax(0, 1.08fr) minmax(0, 1fr); gap: 14px; }
+  .cue-row { grid-template-columns: 58px minmax(0, 1.08fr) minmax(0, 1fr) 30px; gap: 14px; }
   .cue-row { padding-right: 18px; padding-left: 18px; }
   .transcript-head { padding-right: 18px; padding-left: 18px; }
   .playing-bars { left: 34px; }
@@ -511,6 +541,8 @@ button { cursor: pointer; }
     padding: 14px;
   }
   .cue-zh { grid-column: 2; }
+  .cue-favorite { grid-column: 1; grid-row: 2; justify-self: start; margin-left: 14px; }
+  .cue-row:has(.cue-favorite) .cue-zh { padding-right: 4px; }
   .cue-en { font-size: 13px; }
   .playing-bars { left: 31px; top: 39px; }
   .word-inspector { max-height: 210px; overflow: auto; padding-right: 14px; padding-left: 14px; }
@@ -518,4 +550,6 @@ button { cursor: pointer; }
   .vocabulary-list { overflow: visible; }
   .dictionary-workbench { min-height: 270px; border-top: 1px solid var(--line); border-left: 0; }
   .dictionary-results { min-height: 0; }
+  .favorite-summary { padding: 18px 14px 15px; }
+  .favorite-example-list { padding-right: 14px; padding-left: 14px; }
 }

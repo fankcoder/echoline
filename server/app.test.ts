@@ -31,7 +31,7 @@ describe('local production API', () => {
     app = await buildApp({ database: new EchoDatabase(':memory:') });
     const response = await app.inject({ method: 'GET', url: '/api/bootstrap' });
     expect(response.statusCode).toBe(200);
-    expect(response.json()).toMatchObject({ migrationVersion: 4, user: null, vocabulary: [], courses: [{ id: 'ai-prompting' }] });
+    expect(response.json()).toMatchObject({ migrationVersion: 5, user: null, vocabulary: [], favoriteExamples: [], courses: [{ id: 'ai-prompting' }] });
   });
 
   it('supports course CRUD and stable lesson membership', async () => {
@@ -119,6 +119,32 @@ describe('local production API', () => {
     const response = await app.inject({ method: 'POST', url: '/api/vocabulary/toggle', payload: { word: 'frontier' } });
     expect(response.statusCode).toBe(401);
     expect(response.json().error.code).toBe('AUTH_REQUIRED');
+  });
+
+  it('merges local favorite examples into the signed-in account and isolates them', async () => {
+    const db = new EchoDatabase(':memory:'); app = await buildApp({ database: db });
+    const lesson = db.upsertPendingLesson('https://learn.deeplearning.ai/course/lesson/favorite');
+    db.saveResolvedLesson({ id: lesson.id, sourceUrl: lesson.sourceUrl, title: 'Favorite lesson', hash: 'favorite-hash', cues: [{ id: 'cue-1', start: 12, end: 14, en: 'This is worth remembering.' }] });
+    db.saveTranslations(lesson.id, 'favorite-hash', [{ id: 'cue-1', text: '这句话值得记住。' }], 'test', 'test', 'v1');
+    const anonymous = await app.inject({ method: 'POST', url: '/api/favorite-examples', payload: { lessonId: lesson.id, cueId: 'cue-1' } });
+    expect(anonymous.statusCode).toBe(401);
+
+    const alice = await register('favorite-alice@example.com');
+    const synced = await app.inject({ method: 'POST', url: '/api/favorite-examples/sync', headers: { cookie: alice.cookie }, payload: { items: [{ lessonId: lesson.id, cueId: 'local-cue', sentence: 'A locally saved sentence.', translation: '本地保存的短句。', courseName: '本地课程', lessonTitle: '本地课时', sourceUrl: lesson.sourceUrl, startSeconds: 3, createdAt: 1 }] } });
+    expect(synced.statusCode).toBe(200);
+    expect(synced.json().favoriteExamples).toEqual([expect.objectContaining({ cueId: 'local-cue', sentence: 'A locally saved sentence.' })]);
+
+    const saved = await app.inject({ method: 'POST', url: '/api/favorite-examples', headers: { cookie: alice.cookie }, payload: { lessonId: lesson.id, cueId: 'cue-1' } });
+    expect(saved.statusCode).toBe(200);
+    expect(saved.json().favoriteExamples).toEqual(expect.arrayContaining([expect.objectContaining({ cueId: 'cue-1', translation: '这句话值得记住。' })]));
+    const savedId = saved.json().favoriteExamples.find((item: { cueId: string }) => item.cueId === 'cue-1').id;
+
+    const bob = await register('favorite-bob@example.com');
+    expect((await app.inject({ method: 'GET', url: '/api/favorite-examples', headers: { cookie: bob.cookie } })).json()).toEqual({ favoriteExamples: [] });
+    expect((await app.inject({ method: 'DELETE', url: `/api/favorite-examples/${savedId}`, headers: { cookie: bob.cookie } })).statusCode).toBe(404);
+    const removed = await app.inject({ method: 'DELETE', url: `/api/favorite-examples/${savedId}`, headers: { cookie: alice.cookie } });
+    expect(removed.statusCode).toBe(200);
+    expect(removed.json().favoriteExamples).toEqual([expect.objectContaining({ cueId: 'local-cue' })]);
   });
 
   it('creates a session and keeps each user vocabulary isolated', async () => {

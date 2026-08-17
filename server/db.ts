@@ -80,6 +80,14 @@ CREATE TABLE IF NOT EXISTS user_vocabulary (
   PRIMARY KEY(user_id, word)
 );
 CREATE INDEX IF NOT EXISTS user_vocabulary_by_user_added_at ON user_vocabulary(user_id, added_at, word);
+CREATE TABLE IF NOT EXISTS user_favorite_examples (
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE, id TEXT NOT NULL,
+  lesson_id TEXT NOT NULL, cue_id TEXT NOT NULL, sentence TEXT NOT NULL, translation TEXT NOT NULL,
+  course_name TEXT NOT NULL, lesson_title TEXT NOT NULL, source_url TEXT NOT NULL,
+  start_seconds REAL NOT NULL, created_at INTEGER NOT NULL,
+  PRIMARY KEY(user_id, id), UNIQUE(user_id, lesson_id, cue_id)
+);
+CREATE INDEX IF NOT EXISTS user_favorite_examples_by_user_created_at ON user_favorite_examples(user_id, created_at DESC);
 CREATE TABLE IF NOT EXISTS data_migrations (
   name TEXT PRIMARY KEY, user_id TEXT REFERENCES users(id) ON DELETE SET NULL, completed_at INTEGER NOT NULL
 );
@@ -125,7 +133,7 @@ export class EchoDatabase {
     const reviewColumns = new Set((this.db.prepare('PRAGMA table_info(review_records)').all() as Array<{ name: string }>).map((column) => column.name));
     if (!reviewColumns.has('user_id')) this.db.exec('ALTER TABLE review_records ADD COLUMN user_id TEXT');
     this.db.exec("UPDATE vocabulary SET display_text=COALESCE(display_text,word), normalized_text=COALESCE(normalized_text,word), kind=COALESCE(kind,'word')");
-    this.db.prepare('UPDATE schema_meta SET version=4').run();
+    this.db.prepare('UPDATE schema_meta SET version=5').run();
   }
 
   private seed() {
@@ -289,6 +297,46 @@ export class EchoDatabase {
     this.transaction(() => Object.entries(values).forEach(([key, value]) => statement.run(key, JSON.stringify(value), Date.now())));
   }
 
+  listFavoriteExamples(userId: string) {
+    return (this.db.prepare('SELECT * FROM user_favorite_examples WHERE user_id=? ORDER BY created_at DESC, id DESC').all(userId) as any[]).map((row) => ({
+      id: row.id, lessonId: row.lesson_id, cueId: row.cue_id, sentence: row.sentence, translation: row.translation,
+      courseName: row.course_name, lessonTitle: row.lesson_title, sourceUrl: row.source_url, startSeconds: row.start_seconds, createdAt: row.created_at,
+    }));
+  }
+
+  addFavoriteExample(userId: string, lessonId: string, cueId: string, courseId?: string) {
+    const lesson = this.getLesson(lessonId); if (!lesson) throw new Error('课时不存在');
+    const cue = this.getCues(lessonId).cues.find((item) => item.id === cueId); if (!cue) throw new Error('字幕不存在');
+    if (!cue.zh) throw new Error('请先翻译本句后再收藏');
+    const existing = this.db.prepare('SELECT id FROM user_favorite_examples WHERE user_id=? AND lesson_id=? AND cue_id=?').get(userId, lessonId, cueId) as { id: string } | undefined;
+    if (existing) return { saved: false, favoriteExamples: this.listFavoriteExamples(userId) };
+    const course = courseId
+      ? this.db.prepare('SELECT c.name FROM courses c JOIN course_lessons cl ON cl.course_id=c.id WHERE c.id=? AND cl.lesson_id=?').get(courseId, lessonId) as { name: string } | undefined
+      : this.db.prepare('SELECT c.name FROM courses c JOIN course_lessons cl ON cl.course_id=c.id WHERE cl.lesson_id=? ORDER BY cl.added_at LIMIT 1').get(lessonId) as { name: string } | undefined;
+    this.db.prepare(`INSERT INTO user_favorite_examples(user_id,id,lesson_id,cue_id,sentence,translation,course_name,lesson_title,source_url,start_seconds,created_at)
+      VALUES(?,?,?,?,?,?,?,?,?,?,?)`).run(userId, randomUUID(), lessonId, cueId, cue.en, cue.zh, course?.name || '未分类课程', lesson.title, lesson.sourceUrl, cue.start, Date.now());
+    return { saved: true, favoriteExamples: this.listFavoriteExamples(userId) };
+  }
+
+  removeFavoriteExample(userId: string, id: string) {
+    return this.db.prepare('DELETE FROM user_favorite_examples WHERE user_id=? AND id=?').run(userId, id).changes > 0;
+  }
+
+  syncUserFavoriteExamples(userId: string, items: Array<{ lessonId: string; cueId: string; sentence: string; translation: string; courseName?: string; lessonTitle?: string; sourceUrl: string; startSeconds?: number; createdAt?: number }>) {
+    const seen = new Set<string>();
+    const insert = this.db.prepare(`INSERT OR IGNORE INTO user_favorite_examples(user_id,id,lesson_id,cue_id,sentence,translation,course_name,lesson_title,source_url,start_seconds,created_at)
+      VALUES(?,?,?,?,?,?,?,?,?,?,?)`);
+    this.transaction(() => items.forEach((item) => {
+      const key = `${item.lessonId}:${item.cueId}`;
+      if (seen.has(key)) return;
+      seen.add(key);
+      const startSeconds = typeof item.startSeconds === 'number' && Number.isFinite(item.startSeconds) ? item.startSeconds : 0;
+      const createdAt = typeof item.createdAt === 'number' && Number.isFinite(item.createdAt) ? item.createdAt : Date.now();
+      insert.run(userId, randomUUID(), item.lessonId, item.cueId, item.sentence, item.translation, item.courseName || '未分类课程', item.lessonTitle || '未命名课时', item.sourceUrl, startSeconds, createdAt);
+    }));
+    return this.listFavoriteExamples(userId);
+  }
+
   createUser(email: string, passwordHash: string | null, displayName: string, avatarUrl: string | null = null) {
     const id = randomUUID(); const now = Date.now();
     this.db.prepare('INSERT INTO users(id,email,password_hash,display_name,avatar_url,created_at,updated_at) VALUES(?,?,?,?,?,?,?)')
@@ -443,6 +491,18 @@ export class EchoDatabase {
     });
   }
 
+  claimLegacyFavoriteExamples(userId: string) {
+    const migrationName = 'legacy_global_favorite_examples_v1';
+    const exists = this.db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='favorite_examples'").get();
+    if (!exists || this.db.prepare('SELECT name FROM data_migrations WHERE name=?').get(migrationName)) return 0;
+    return this.transaction(() => {
+      const result = this.db.prepare(`INSERT OR IGNORE INTO user_favorite_examples(user_id,id,lesson_id,cue_id,sentence,translation,course_name,lesson_title,source_url,start_seconds,created_at)
+        SELECT ?,id,lesson_id,cue_id,sentence,translation,course_name,lesson_title,source_url,start_seconds,created_at FROM favorite_examples`).run(userId);
+      this.db.prepare('INSERT INTO data_migrations(name,user_id,completed_at) VALUES(?,?,?)').run(migrationName, userId, Date.now());
+      return result.changes;
+    });
+  }
+
   getDictionary(word: string) { const row = this.db.prepare('SELECT * FROM dictionary_cache WHERE word=?').get(word) as any; return row ? JSON.parse(row.payload) : null; }
   saveDictionary(word: string, payload: unknown, source: string, version = 'v1') { this.db.prepare('INSERT INTO dictionary_cache(word,payload,source,version,expires_at,updated_at) VALUES(?,?,?,?,?,?) ON CONFLICT(word) DO UPDATE SET payload=excluded.payload,source=excluded.source,version=excluded.version,expires_at=excluded.expires_at,updated_at=excluded.updated_at').run(word, JSON.stringify(payload), source, version, Date.now() + 365 * 86400000, Date.now()); }
 
@@ -461,7 +521,7 @@ export class EchoDatabase {
   exportData(userId?: string) {
     const courses = this.listCourses();
     const lessonIds = [...new Set(courses.flatMap((course) => course.lessons.map((lesson) => lesson.id)))];
-    return { version: 2, exportedAt: Date.now(), courses, progress: lessonIds.map((lessonId) => ({ lessonId, ...this.getProgress(lessonId) })), vocabulary: this.listVocabulary(userId), settings: this.getSettings() };
+    return { version: 3, exportedAt: Date.now(), courses, progress: lessonIds.map((lessonId) => ({ lessonId, ...this.getProgress(lessonId) })), vocabulary: this.listVocabulary(userId), favoriteExamples: userId ? this.listFavoriteExamples(userId) : [], settings: this.getSettings() };
   }
 
   private hashSecret(value: string) {

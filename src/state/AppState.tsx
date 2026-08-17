@@ -1,7 +1,8 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { api, jsonBody } from '../api';
 import { clearLocalVocabulary, readLocalVocabulary, removeLocalPhrase, reviewLocalVocabulary, saveLocalPhrase, toggleLocalWord, writeLocalVocabulary } from '../localVocabulary';
-import type { Bootstrap, Settings, VocabularyItem } from '../types';
+import { clearLocalFavoriteExamples, readLocalFavoriteExamples, removeLocalFavoriteExample, saveLocalFavoriteExample, writeLocalFavoriteExamples, type FavoriteExampleValue } from '../localFavoriteExamples';
+import type { Bootstrap, FavoriteExample, Settings, VocabularyItem } from '../types';
 
 type PhraseValue = { text: string; meaning: string; note: string; example: string; lessonId: string | null; cueId: string | null };
 
@@ -11,6 +12,8 @@ type AppStateValue = {
   toggleVocabulary: (word: string, lessonId?: string | null, cueId?: string | null) => Promise<void>;
   savePhrase: (value: PhraseValue, existingWord?: string) => Promise<void>;
   removePhrase: (word: string) => Promise<void>;
+  saveFavoriteExample: (value: FavoriteExampleValue, courseId?: string) => Promise<void>;
+  removeFavoriteExample: (id: string) => Promise<void>;
   recordReview: (group: number, items: Array<{ word: string; kind: string }>) => Promise<void>;
   logout: () => Promise<void>;
   notify: (message: string) => void;
@@ -44,14 +47,31 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     });
   }, []);
 
+  const applyFavoriteExamples = useCallback((favoriteExamples: FavoriteExample[]) => {
+    setData((current) => {
+      if (!current) return current;
+      if (!current.user) writeLocalFavoriteExamples(favoriteExamples);
+      return { ...current, favoriteExamples };
+    });
+  }, []);
+
   const loadBootstrap = useCallback(async (signal?: AbortSignal) => {
     const next = await api<Bootstrap>('/api/bootstrap', { signal });
-    if (!next.user) return { ...next, vocabulary: readLocalVocabulary() };
+    if (!next.user) return { ...next, vocabulary: readLocalVocabulary(), favoriteExamples: readLocalFavoriteExamples() };
     const localVocabulary = readLocalVocabulary();
-    if (!localVocabulary.length) return next;
-    const synced = await api<{ vocabulary: VocabularyItem[] }>('/api/vocabulary/sync', { method: 'POST', signal, ...jsonBody({ items: localVocabulary }) });
-    clearLocalVocabulary();
-    return { ...next, vocabulary: synced.vocabulary };
+    const localFavoriteExamples = readLocalFavoriteExamples();
+    if (!localVocabulary.length && !localFavoriteExamples.length) return next;
+    const [vocabulary, favoriteExamples] = await Promise.all([
+      localVocabulary.length
+        ? api<{ vocabulary: VocabularyItem[] }>('/api/vocabulary/sync', { method: 'POST', signal, ...jsonBody({ items: localVocabulary }) })
+        : Promise.resolve({ vocabulary: next.vocabulary }),
+      localFavoriteExamples.length
+        ? api<{ favoriteExamples: FavoriteExample[] }>('/api/favorite-examples/sync', { method: 'POST', signal, ...jsonBody({ items: localFavoriteExamples }) })
+        : Promise.resolve({ favoriteExamples: next.favoriteExamples }),
+    ]);
+    if (localVocabulary.length) clearLocalVocabulary();
+    if (localFavoriteExamples.length) clearLocalFavoriteExamples();
+    return { ...next, vocabulary: vocabulary.vocabulary, favoriteExamples: favoriteExamples.favoriteExamples };
   }, []);
 
   const refresh = useCallback(async () => { setData(await loadBootstrap()); setError(''); }, [loadBootstrap]);
@@ -105,6 +125,24 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     applyVocabulary(removeLocalPhrase(data?.vocabulary || [], word));
   }, [applyVocabulary, data?.user, data?.vocabulary]);
 
+  const saveFavoriteExample = useCallback(async (value: FavoriteExampleValue, courseId?: string) => {
+    if (data?.user) {
+      const result = await api<{ favoriteExamples: FavoriteExample[] }>('/api/favorite-examples', { method: 'POST', ...jsonBody({ lessonId: value.lessonId, cueId: value.cueId, courseId }) });
+      applyFavoriteExamples(result.favoriteExamples);
+      return;
+    }
+    applyFavoriteExamples(saveLocalFavoriteExample(data?.favoriteExamples || [], value));
+  }, [applyFavoriteExamples, data?.favoriteExamples, data?.user]);
+
+  const removeFavoriteExample = useCallback(async (id: string) => {
+    if (data?.user) {
+      const result = await api<{ favoriteExamples: FavoriteExample[] }>(`/api/favorite-examples/${encodeURIComponent(id)}`, { method: 'DELETE' });
+      applyFavoriteExamples(result.favoriteExamples);
+      return;
+    }
+    applyFavoriteExamples(removeLocalFavoriteExample(data?.favoriteExamples || [], id));
+  }, [applyFavoriteExamples, data?.favoriteExamples, data?.user]);
+
   const recordReview = useCallback(async (group: number, items: Array<{ word: string; kind: string }>) => {
     if (data?.user) {
       const result = await api<{ vocabulary: VocabularyItem[] }>(`/api/review/${group}`, { method: 'POST', ...jsonBody({ items }) });
@@ -117,7 +155,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
   const logout = useCallback(async () => { await api('/api/auth/logout', { method: 'POST' }); await refresh(); }, [refresh]);
 
   useEffect(() => { document.documentElement.style.colorScheme = data?.settings.darkMode ? 'dark' : 'light'; }, [data?.settings.darkMode]);
-  const value = useMemo(() => ({ data, loading, error, notice, refresh, updateSettings, toggleVocabulary, savePhrase, removePhrase, recordReview, logout, notify }), [data, loading, error, notice, refresh, updateSettings, toggleVocabulary, savePhrase, removePhrase, recordReview, logout, notify]);
+  const value = useMemo(() => ({ data, loading, error, notice, refresh, updateSettings, toggleVocabulary, savePhrase, removePhrase, saveFavoriteExample, removeFavoriteExample, recordReview, logout, notify }), [data, loading, error, notice, refresh, updateSettings, toggleVocabulary, savePhrase, removePhrase, saveFavoriteExample, removeFavoriteExample, recordReview, logout, notify]);
   return <AppStateContext.Provider value={value}>{children}</AppStateContext.Provider>;
 }
 
