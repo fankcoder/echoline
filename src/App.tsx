@@ -11,11 +11,15 @@ const CoursesPage = lazy(() => import('./pages/CoursesPage'));
 const ReviewPage = lazy(() => import('./pages/ReviewPage'));
 
 export default function App() {
-  const { data, loading, error, notice, refresh, notify } = useAppState(); const [statsOpen, setStatsOpen] = useState(false); const [authOpen, setAuthOpen] = useState(false); const location = useLocation(); const navigate = useNavigate();
+  const { data, loading, error, notice, refresh, notify } = useAppState(); const [statsOpen, setStatsOpen] = useState(false); const [authOpen, setAuthOpen] = useState(() => Boolean(new URLSearchParams(window.location.search).get('authError'))); const location = useLocation(); const navigate = useNavigate();
   useEffect(() => {
     const authError = new URLSearchParams(location.search).get('authError');
     if (!authError) return;
-    notify(authError === 'oauth_not_configured' ? '第三方登录尚未配置，请使用邮箱登录或联系管理员' : '第三方授权未完成，请重试');
+    notify(authError === 'oauth_not_configured'
+      ? '第三方登录尚未配置，请使用邮箱登录或联系管理员'
+      : authError === 'oauth_network_error'
+        ? '服务器无法连接 GitHub 或 Google 授权服务，请检查服务器出网或代理配置'
+        : '第三方授权未完成，请重试');
     navigate({ pathname: location.pathname, search: '', hash: location.hash }, { replace: true });
   }, [location.hash, location.pathname, location.search, navigate, notify]);
   if (loading) return <div className="boot-screen"><LoaderCircle className="spin" /><strong>正在打开学习空间</strong></div>;

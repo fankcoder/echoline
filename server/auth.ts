@@ -39,6 +39,12 @@ function config(provider: OAuthProvider) {
 
 function text(value: unknown) { return typeof value === 'string' ? value.trim() : ''; }
 
+export function isOAuthNetworkError(error: unknown) {
+  if (!(error instanceof Error)) return false;
+  const cause = error.cause instanceof Error ? `${error.cause.name} ${error.cause.message}` : '';
+  return /fetch failed|timeout|econnreset|econnrefused|enotfound|ehostunreach/i.test(`${error.name} ${error.message} ${cause}`);
+}
+
 async function responseJson(response: Response) {
   const payload = await response.json().catch(() => null) as unknown;
   if (!response.ok) throw new Error('第三方授权服务暂时不可用，请稍后重试');

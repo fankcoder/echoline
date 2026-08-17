@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 import { buildApp } from './app.js';
 import { EchoDatabase } from './db.js';
@@ -10,6 +10,7 @@ afterEach(async () => {
   delete process.env.GITHUB_CLIENT_ID; delete process.env.GITHUB_CLIENT_SECRET;
   delete process.env.GOOGLE_CLIENT_ID; delete process.env.GOOGLE_CLIENT_SECRET;
   delete process.env.LEGACY_VOCABULARY_OWNER_EMAIL;
+  vi.restoreAllMocks();
 });
 
 function sessionCookie(response: { headers: Record<string, string | string[] | number | undefined> }) {
@@ -74,6 +75,19 @@ describe('local production API', () => {
     const response = await app.inject({ method: 'GET', url: '/api/auth/google/start' });
     expect(response.statusCode).toBe(302);
     expect(response.headers.location).toBe('/?authError=oauth_not_configured');
+  });
+
+  it('reports a third-party network failure without creating a session', async () => {
+    process.env.PUBLIC_ORIGIN = 'https://anhao.net'; process.env.APP_BASE_PATH = '/learn';
+    process.env.GITHUB_CLIENT_ID = 'github-client'; process.env.GITHUB_CLIENT_SECRET = 'github-secret';
+    vi.spyOn(globalThis, 'fetch').mockRejectedValue(new TypeError('fetch failed: Connect Timeout Error'));
+    app = await buildApp({ database: new EchoDatabase(':memory:') });
+    const started = await app.inject({ method: 'GET', url: '/api/auth/github/start' });
+    const state = new URL(String(started.headers.location)).searchParams.get('state');
+    const callback = await app.inject({ method: 'GET', url: `/api/auth/github/callback?code=temporary-code&state=${state}`, headers: { cookie: sessionCookie(started) } });
+    expect(callback.statusCode).toBe(302);
+    expect(callback.headers.location).toBe('/learn/?authError=oauth_network_error');
+    expect((await app.inject({ method: 'GET', url: '/api/auth/me' })).json()).toEqual({ user: null });
   });
 
   it('validates dictionary search direction before querying the local database', async () => {

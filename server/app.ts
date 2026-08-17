@@ -6,7 +6,7 @@ import { EchoDatabase } from './db.js';
 import { lookupWord, searchDictionary } from './dictionary.js';
 import { resolveLessonAssets, RESOLVER_VERSION } from './resolver.js';
 import { translateCue } from './translation.js';
-import { appHomePath, authenticateOAuthUser, clearCookie, cookie, cookieValue, exchangeOAuthProfile, hashPassword, normalizeEmail, oauthCookieName, sessionCookieName, sessionExpiry, sessionToken, startOAuth, verifyPassword, type OAuthProvider } from './auth.js';
+import { appHomePath, authenticateOAuthUser, clearCookie, cookie, cookieValue, exchangeOAuthProfile, hashPassword, isOAuthNetworkError, normalizeEmail, oauthCookieName, sessionCookieName, sessionExpiry, sessionToken, startOAuth, verifyPassword, type OAuthProvider } from './auth.js';
 import { addLessonSchema, createCourseSchema, loginSchema, phraseSchema, phraseUpdateSchema, progressSchema, registerSchema, reorderSchema, resolveLessonSchema, settingsSchema, updateCourseSchema, vocabularySchema, vocabularySyncSchema } from './types.js';
 
 type PlaybackAsset = ({ kind: 'hls'; mediaUrl: string } | { kind: 'youtube'; videoId: string }) & { resolvedAt: number; resolverVersion: string };
@@ -35,7 +35,7 @@ function errorMessage(error: unknown) {
 
 export async function buildApp(options: { database?: EchoDatabase; production?: boolean } = {}): Promise<FastifyInstance> {
   const db = options.database || new EchoDatabase();
-  const app = Fastify({ logger: { level: process.env.LOG_LEVEL || 'info', redact: ['req.headers.authorization', 'apiKey'] }, bodyLimit: 2 * 1024 * 1024 });
+  const app = Fastify({ logger: { level: process.env.LOG_LEVEL || 'info', redact: ['req.headers.authorization', 'req.url', 'apiKey'] }, bodyLimit: 2 * 1024 * 1024 });
 
   app.addHook('onRequest', async (request, reply) => {
     const origin = request.headers.origin;
@@ -122,7 +122,8 @@ export async function buildApp(options: { database?: EchoDatabase; production?: 
       reply.header('Set-Cookie', [clearCookie(oauthCookieName(provider)), cookie(sessionCookieName(), token)]).redirect(appHomePath());
     } catch (error) {
       app.log.warn({ err: error, provider }, 'oauth callback failed');
-      reply.header('Set-Cookie', clearCookie(oauthCookieName(provider))).redirect(`${appHomePath()}?authError=oauth_failed`);
+      const authError = isOAuthNetworkError(error) ? 'oauth_network_error' : 'oauth_failed';
+      reply.header('Set-Cookie', clearCookie(oauthCookieName(provider))).redirect(`${appHomePath()}?authError=${authError}`);
     }
   });
   app.get('/api/bootstrap', async (request) => {
