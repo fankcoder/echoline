@@ -1,17 +1,22 @@
 import { resolve } from 'node:path';
-import Fastify, { type FastifyInstance } from 'fastify';
+import Fastify, { type FastifyInstance, type FastifyRequest } from 'fastify';
 import fastifyStatic from '@fastify/static';
 import { z, ZodError } from 'zod';
 import { EchoDatabase } from './db.js';
 import { lookupWord, searchDictionary } from './dictionary.js';
 import { resolveLessonAssets, RESOLVER_VERSION } from './resolver.js';
 import { translateCue } from './translation.js';
-import { addLessonSchema, createCourseSchema, phraseSchema, phraseUpdateSchema, progressSchema, reorderSchema, resolveLessonSchema, settingsSchema, updateCourseSchema, vocabularySchema } from './types.js';
+import { appHomePath, authenticateOAuthUser, clearCookie, cookie, cookieValue, exchangeOAuthProfile, hashPassword, normalizeEmail, oauthCookieName, sessionCookieName, sessionExpiry, sessionToken, startOAuth, verifyPassword, type OAuthProvider } from './auth.js';
+import { addLessonSchema, createCourseSchema, loginSchema, phraseSchema, phraseUpdateSchema, progressSchema, registerSchema, reorderSchema, resolveLessonSchema, settingsSchema, updateCourseSchema, vocabularySchema, vocabularySyncSchema } from './types.js';
 
 type PlaybackAsset = ({ kind: 'hls'; mediaUrl: string } | { kind: 'youtube'; videoId: string }) & { resolvedAt: number; resolverVersion: string };
 const playbackAssets = new Map<string, PlaybackAsset>();
 const requests = new Map<string, { count: number; resetAt: number }>();
 const LOCAL_ALLOWED_ORIGINS = new Set(['http://127.0.0.1:5173', 'http://localhost:5173', 'http://127.0.0.1:4173', 'http://localhost:4173', 'http://127.0.0.1:5174']);
+
+class HttpError extends Error {
+  constructor(public statusCode: number, public code: string, message: string) { super(message); }
+}
 
 function allowedOrigins() {
   const configured = (process.env.PUBLIC_ORIGIN || '').split(',').flatMap((value) => {
@@ -42,9 +47,20 @@ export async function buildApp(options: { database?: EchoDatabase; production?: 
 
   app.setErrorHandler((error, _request, reply) => {
     const validation = error instanceof ZodError;
+    const expected = error instanceof HttpError;
     app.log.error({ err: error }, validation ? 'request validation failed' : 'request failed');
-    reply.code(validation ? 400 : 500).send({ error: { code: validation ? 'VALIDATION_ERROR' : 'INTERNAL_ERROR', message: errorMessage(error) } });
+    reply.code(expected ? error.statusCode : validation ? 400 : 500).send({ error: { code: expected ? error.code : validation ? 'VALIDATION_ERROR' : 'INTERNAL_ERROR', message: errorMessage(error) } });
   });
+
+  const authUser = (request: FastifyRequest) => {
+    const token = cookieValue(request.headers.cookie, sessionCookieName());
+    return token ? db.getSessionUser(token) : null;
+  };
+  const requireUser = (request: FastifyRequest) => {
+    const user = authUser(request);
+    if (!user) throw new HttpError(401, 'AUTH_REQUIRED', '请先登录后再使用云端生词本');
+    return user;
+  };
 
   const hydrate = (lessonId: string) => {
     const lesson = db.getLesson(lessonId); if (!lesson) return null;
@@ -64,11 +80,58 @@ export async function buildApp(options: { database?: EchoDatabase; production?: 
   };
 
   app.get('/api/health', async () => ({ ok: true, version: '1.0.0', resolverVersion: RESOLVER_VERSION }));
-  app.get('/api/bootstrap', async () => {
-    const courses = db.listCourses(); const vocabulary = db.listVocabulary(); const settings = db.getSettings();
+  app.get('/api/auth/me', async (request) => ({ user: authUser(request) }));
+  app.post('/api/auth/register', async (request, reply) => {
+    const input = registerSchema.parse(request.body); const email = normalizeEmail(input.email);
+    if (db.getUserByEmail(email)) throw new HttpError(409, 'EMAIL_EXISTS', '该邮箱已经注册，请直接登录');
+    const user = db.createUser(email, await hashPassword(input.password), input.displayName || email.split('@')[0]);
+    const token = sessionToken(); db.createSession(user.id, token, sessionExpiry());
+    reply.header('Set-Cookie', cookie(sessionCookieName(), token));
+    reply.code(201).send({ user });
+  });
+  app.post('/api/auth/login', async (request, reply) => {
+    const input = loginSchema.parse(request.body); const account = db.getUserByEmail(normalizeEmail(input.email));
+    if (!account || !await verifyPassword(input.password, account.password_hash || null)) throw new HttpError(401, 'INVALID_CREDENTIALS', '邮箱或密码不正确');
+    const token = sessionToken(); db.createSession(account.id, token, sessionExpiry());
+    reply.header('Set-Cookie', cookie(sessionCookieName(), token));
+    reply.send({ user: db.getUser(account.id) });
+  });
+  app.post('/api/auth/logout', async (request, reply) => {
+    const token = cookieValue(request.headers.cookie, sessionCookieName());
+    if (token) db.deleteSession(token);
+    reply.header('Set-Cookie', clearCookie(sessionCookieName())).send({ ok: true });
+  });
+  app.get('/api/auth/:provider/start', async (request, reply) => {
+    const { provider } = z.object({ provider: z.enum(['github', 'google']) }).parse(request.params) as { provider: OAuthProvider };
+    try {
+      const oauth = startOAuth(db, provider, request);
+      reply.header('Set-Cookie', cookie(oauthCookieName(provider), oauth.state, 10 * 60)).redirect(oauth.url);
+    } catch (error) {
+      app.log.warn({ err: error, provider }, 'oauth start failed');
+      reply.redirect(`${appHomePath()}?authError=oauth_not_configured`);
+    }
+  });
+  app.get('/api/auth/:provider/callback', async (request, reply) => {
+    const { provider } = z.object({ provider: z.enum(['github', 'google']) }).parse(request.params) as { provider: OAuthProvider };
+    const query = z.object({ code: z.string().min(1).optional(), state: z.string().min(1).optional(), error: z.string().optional() }).parse(request.query);
+    const stateCookie = cookieValue(request.headers.cookie, oauthCookieName(provider));
+    try {
+      if (query.error || !query.code || !query.state || !stateCookie || query.state !== stateCookie || !db.consumeOAuthState(query.state, provider)) throw new HttpError(400, 'OAUTH_FAILED', '第三方授权未完成，请重试');
+      const user = authenticateOAuthUser(db, provider, await exchangeOAuthProfile(provider, query.code, request));
+      const token = sessionToken(); db.createSession(user.id, token, sessionExpiry());
+      reply.header('Set-Cookie', [clearCookie(oauthCookieName(provider)), cookie(sessionCookieName(), token)]).redirect(appHomePath());
+    } catch (error) {
+      app.log.warn({ err: error, provider }, 'oauth callback failed');
+      reply.header('Set-Cookie', clearCookie(oauthCookieName(provider))).redirect(`${appHomePath()}?authError=oauth_failed`);
+    }
+  });
+  app.get('/api/bootstrap', async (request) => {
+    const user = authUser(request);
+    if (user && normalizeEmail(process.env.LEGACY_VOCABULARY_OWNER_EMAIL || '') === user.email) db.claimLegacyVocabulary(user.id);
+    const courses = db.listCourses(); const vocabulary = user ? db.listVocabulary(user.id) : []; const settings = db.getSettings();
     const statsRows = db.db.prepare('SELECT * FROM study_progress').all() as any[];
     const stats = { playbackSeconds: statsRows.reduce((sum, row) => sum + row.playback_seconds, 0), sessionSeconds: statsRows.reduce((sum, row) => sum + row.session_seconds, 0), learnedLessons: statsRows.filter((row) => JSON.parse(row.completed_cue_ids).length > 0).length };
-    return { courses, vocabulary, settings, stats, migrationVersion: 2 };
+    return { user, courses, vocabulary, settings, stats, migrationVersion: 4 };
   });
 
   app.post('/api/lessons/resolve', async (request, reply) => {
@@ -136,13 +199,14 @@ export async function buildApp(options: { database?: EchoDatabase; production?: 
     db.saveProgress(id, input); reply.send(db.getProgress(id));
   });
   app.patch('/api/settings', async (request) => { const values = settingsSchema.parse(request.body); db.saveSettings(values); return db.getSettings(); });
-  app.get('/api/vocabulary', async () => db.listVocabulary());
-  app.post('/api/vocabulary/toggle', async (request) => { const input = vocabularySchema.parse(request.body); return { saved: db.toggleVocabulary(input.word, input.lessonId, input.cueId), vocabulary: db.listVocabulary() }; });
-  app.get('/api/phrases', async () => db.listVocabulary().filter((item) => item.kind === 'phrase'));
-  app.post('/api/phrases', async (request) => { const input = phraseSchema.parse(request.body); return db.addPhrase(input.phrase, input.meaning, input.note, input.example, input.lessonId, input.cueId); });
-  app.patch('/api/phrases/:text', async (request, reply) => { const { text } = z.object({ text: z.string().min(2).max(160) }).parse(request.params); const input = phraseUpdateSchema.parse(request.body); const result = db.updatePhrase(text, input.phrase, input.meaning, input.note, input.example); if (result === 'not_found') return reply.code(404).send({ error: { code: 'PHRASE_NOT_FOUND', message: '短语不存在' } }); if (result === 'duplicate') return reply.code(409).send({ error: { code: 'PHRASE_EXISTS', message: '短语已存在' } }); return { ok: true, vocabulary: db.listVocabulary() }; });
-  app.delete('/api/phrases/:text', async (request, reply) => { const { text } = z.object({ text: z.string().min(2).max(160) }).parse(request.params); if (!db.removePhrase(text)) return reply.code(404).send({ error: { code: 'PHRASE_NOT_FOUND', message: '短语不存在' } }); reply.send({ ok: true, vocabulary: db.listVocabulary() }); });
-  app.post('/api/review/:group', async (request) => { const { group } = z.object({ group: z.coerce.number().int().min(0) }).parse(request.params); const input = z.object({ items: z.array(z.object({ word: z.string().min(1), kind: z.string().optional() })).max(10).optional(), words: z.array(z.string()).max(10).optional() }).parse(request.body); const items = input.items || (input.words || []).map((word) => ({ word, kind: 'word' })); db.recordReview(group, items); return { ok: true, vocabulary: db.listVocabulary() }; });
+  app.get('/api/vocabulary', async (request) => db.listVocabulary(requireUser(request).id));
+  app.post('/api/vocabulary/toggle', async (request) => { const user = requireUser(request); const input = vocabularySchema.parse(request.body); return { saved: db.toggleVocabulary(input.word, input.lessonId, input.cueId, user.id), vocabulary: db.listVocabulary(user.id) }; });
+  app.post('/api/vocabulary/sync', async (request) => { const user = requireUser(request); return { vocabulary: db.syncUserVocabulary(user.id, vocabularySyncSchema.parse(request.body).items) }; });
+  app.get('/api/phrases', async (request) => db.listVocabulary(requireUser(request).id).filter((item) => item.kind === 'phrase'));
+  app.post('/api/phrases', async (request) => { const user = requireUser(request); const input = phraseSchema.parse(request.body); const result = db.addPhrase(input.phrase, input.meaning, input.note, input.example, input.lessonId, input.cueId, user.id); return { ...result, vocabulary: db.listVocabulary(user.id) }; });
+  app.patch('/api/phrases/:text', async (request, reply) => { const user = requireUser(request); const { text } = z.object({ text: z.string().min(2).max(160) }).parse(request.params); const input = phraseUpdateSchema.parse(request.body); const result = db.updatePhrase(text, input.phrase, input.meaning, input.note, input.example, user.id); if (result === 'not_found') return reply.code(404).send({ error: { code: 'PHRASE_NOT_FOUND', message: '短语不存在' } }); if (result === 'duplicate') return reply.code(409).send({ error: { code: 'PHRASE_EXISTS', message: '短语已存在' } }); return { ok: true, vocabulary: db.listVocabulary(user.id) }; });
+  app.delete('/api/phrases/:text', async (request, reply) => { const user = requireUser(request); const { text } = z.object({ text: z.string().min(2).max(160) }).parse(request.params); if (!db.removePhrase(text, user.id)) return reply.code(404).send({ error: { code: 'PHRASE_NOT_FOUND', message: '短语不存在' } }); reply.send({ ok: true, vocabulary: db.listVocabulary(user.id) }); });
+  app.post('/api/review/:group', async (request) => { const user = requireUser(request); const { group } = z.object({ group: z.coerce.number().int().min(0) }).parse(request.params); const input = z.object({ items: z.array(z.object({ word: z.string().min(1), kind: z.string().optional() })).max(10).optional(), words: z.array(z.string()).max(10).optional() }).parse(request.body); const items = input.items || (input.words || []).map((word) => ({ word, kind: 'word' })); db.recordReview(group, items, user.id); return { ok: true, vocabulary: db.listVocabulary(user.id) }; });
   app.get('/api/dictionary/:word', async (request, reply) => {
     const { word } = z.object({ word: z.string().min(1).max(80) }).parse(request.params);
     try { reply.send(await lookupWord(db, word)); } catch (error) { reply.code(404).send({ error: { code: 'WORD_NOT_FOUND', message: errorMessage(error) } }); }
@@ -153,8 +217,9 @@ export async function buildApp(options: { database?: EchoDatabase; production?: 
     catch (error) { reply.code(503).send({ error: { code: 'DICTIONARY_UNAVAILABLE', message: errorMessage(error) } }); }
   });
 
-  app.get('/api/export', async (_request, reply) => reply.header('Content-Disposition', `attachment; filename="echoline-${new Date().toISOString().slice(0,10)}.json"`).send(db.exportData()));
+  app.get('/api/export', async (request, reply) => reply.header('Content-Disposition', `attachment; filename="echoline-${new Date().toISOString().slice(0,10)}.json"`).send(db.exportData(requireUser(request).id)));
   app.post('/api/import', async (request) => {
+    const user = requireUser(request);
     const input = z.object({ version: z.union([z.literal(1), z.literal(2)]), courses: z.array(z.any()), progress: z.array(z.any()).default([]), vocabulary: z.array(z.any()).default([]), settings: z.record(z.any()).default({}) }).parse(request.body);
     const lessonMap = new Map<string, string>();
     for (const importedCourse of input.courses) {
@@ -168,11 +233,11 @@ export async function buildApp(options: { database?: EchoDatabase; production?: 
       }
     }
     for (const item of input.progress) { const lessonId = lessonMap.get(item.lessonId); if (lessonId) db.saveProgress(lessonId, item); }
-    const existingWords = new Set(db.listVocabulary().map((item) => item.word));
+    const existingWords = new Set(db.listVocabulary(user.id).map((item) => item.word));
     for (const item of input.vocabulary) {
       if (!item?.word || existingWords.has(item.word)) continue;
-      if (item.kind === 'phrase' && item.meaning) db.addPhrase(item.text || item.word, item.meaning, item.note, item.example, lessonMap.get(item.lessonId) || null, item.cueId);
-      else db.toggleVocabulary(item.word, lessonMap.get(item.lessonId) || null, item.cueId);
+      if (item.kind === 'phrase' && item.meaning) db.addPhrase(item.text || item.word, item.meaning, item.note, item.example, lessonMap.get(item.lessonId) || null, item.cueId, user.id);
+      else db.toggleVocabulary(item.word, lessonMap.get(item.lessonId) || null, item.cueId, user.id);
     }
     db.saveSettings(input.settings);
     return { ok: true, importedCourses: input.courses.length, pendingResolution: lessonMap.size };

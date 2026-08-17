@@ -15,7 +15,7 @@ const formatTime = (seconds: number) => `${String(Math.floor(seconds / 60)).padS
 
 export default function PlayerPage() {
   const { lessonId = '' } = useParams(); const navigate = useNavigate();
-  const { data, refresh, updateSettings, notify } = useAppState();
+  const { data, refresh, updateSettings, toggleVocabulary: toggleSavedVocabulary, savePhrase: saveSavedPhrase, removePhrase: removeSavedPhrase, notify } = useAppState();
   const videoRef = useRef<HTMLVideoElement>(null); const youtubeRef = useRef<YouTubePlayerHandle>(null); const requestVersion = useRef(0); const hlsRef = useRef<Hls | null>(null);
   const lessonAbortRef = useRef<AbortController | null>(null); const activeLessonRef = useRef(lessonId);
   const phaseRef = useRef<Phase>('idle'); const activeRef = useRef(0); const handledEnd = useRef(false); const repeatIndexRef = useRef(0);
@@ -175,7 +175,7 @@ export default function PlayerPage() {
     dictionaryAbort.current?.abort(); const controller = new AbortController(); dictionaryAbort.current = controller; setInspectedPhrase(null); setInspectedWord(word); setDictionary(null); setDictionaryLoading(true); const above = rect.bottom + 100 > window.innerHeight; setTooltip({ x: Math.max(150, Math.min(window.innerWidth - 150, rect.left + rect.width / 2)), y: above ? rect.top - 8 : rect.bottom + 8, above });
     void api<DictionaryEntry>(`/api/dictionary/${encodeURIComponent(word)}`, { signal: controller.signal }).then(setDictionary).catch((reason) => { if ((reason as Error).name !== 'AbortError') setDictionary({ word, ipa: '', type: '', meaning: '词典中暂无释义', note: '', example: '', audio: '', source: '' }); }).finally(() => setDictionaryLoading(false));
   };
-  const toggleWord = async (word: string) => { await api('/api/vocabulary/toggle', { method: 'POST', ...jsonBody({ word, lessonId, cueId: manifest?.cues[activeRef.current]?.id }) }); await refresh(); };
+  const toggleWord = async (word: string) => { await toggleSavedVocabulary(word, lessonId, manifest?.cues[activeRef.current]?.id || null); };
   const inspectPhrase = (phrase: VocabularyItem, rect: DOMRect) => { dictionaryAbort.current?.abort(); setInspectedWord(''); setDictionary(null); setDictionaryLoading(false); setInspectedPhrase(phrase); const above = rect.bottom + 170 > window.innerHeight; setTooltip({ x: Math.max(170, Math.min(window.innerWidth - 170, rect.left + rect.width / 2)), y: above ? rect.top - 8 : rect.bottom + 8, above }); };
   const selectPhrase = (text: string, cueId: string) => {
     const existing = data!.vocabulary.find((item) => item.kind === 'phrase' && item.word === text.toLowerCase().replace(/\s+/g, ' ').trim());
@@ -183,11 +183,10 @@ export default function PlayerPage() {
     window.getSelection()?.removeAllRanges();
   };
   const savePhrase = async (draft: PhraseDraft) => {
-    const body = { phrase: draft.text, meaning: draft.meaning, note: draft.note, example: draft.example, lessonId, cueId: draft.cueId };
-    try { await api(draft.normalized ? `/api/phrases/${encodeURIComponent(draft.normalized)}` : '/api/phrases', { method: draft.normalized ? 'PATCH' : 'POST', ...jsonBody(body) }); await refresh(); setPhraseDraft(null); notify(draft.normalized ? '短语已更新' : '短语已加入生词本'); }
+    try { await saveSavedPhrase({ text: draft.text, meaning: draft.meaning, note: draft.note, example: draft.example, lessonId, cueId: draft.cueId }, draft.normalized); setPhraseDraft(null); notify(draft.normalized ? '短语已更新' : '短语已加入生词本'); }
     catch (reason) { notify((reason as Error).message); }
   };
-  const removePhrase = async (phrase: VocabularyItem) => { try { await api(`/api/phrases/${encodeURIComponent(phrase.word)}`, { method: 'DELETE' }); await refresh(); setInspectedPhrase(null); setTooltip(null); notify('短语已移除'); } catch (reason) { notify((reason as Error).message); } };
+  const removePhrase = async (phrase: VocabularyItem) => { try { await removeSavedPhrase(phrase.word); setInspectedPhrase(null); setTooltip(null); notify('短语已移除'); } catch (reason) { notify((reason as Error).message); } };
   const editPhrase = (phrase: VocabularyItem) => setPhraseDraft({ normalized: phrase.word, text: phrase.text, cueId: phrase.cueId, meaning: phrase.meaning, note: phrase.note, example: phrase.example });
   const translateSentence = async (cueId: string) => {
     const current = manifest; if (!current || current.cues.find((item) => item.id === cueId)?.zh || translatingCueIds.has(cueId)) return;

@@ -37,6 +37,19 @@ export const phraseSchema = z.object({
   lessonId: z.string().uuid().nullable().optional(), cueId: z.string().max(160).nullable().optional(),
 });
 export const phraseUpdateSchema = phraseSchema.pick({ phrase: true, meaning: true, note: true, example: true });
+export const registerSchema = z.object({
+  email: z.string().trim().email().max(254),
+  password: z.string().min(8, '密码至少需要 8 位').max(200),
+  displayName: z.string().trim().min(1).max(80).optional(),
+});
+export const loginSchema = z.object({ email: z.string().trim().email().max(254), password: z.string().min(1).max(200) });
+export const vocabularySyncSchema = z.object({
+  items: z.array(z.object({
+    word: z.string().trim().min(1).max(160), text: z.string().trim().max(160).optional(), kind: z.enum(['word', 'phrase']).optional(),
+    meaning: z.string().trim().max(500).optional(), note: z.string().trim().max(500).optional(), example: z.string().trim().max(500).optional(),
+    lessonId: z.string().uuid().nullable().optional(), cueId: z.string().max(160).nullable().optional(), addedAt: z.number().finite().optional(), reviewCount: z.number().int().min(0).optional(), lastReviewedAt: z.number().finite().nullable().optional(),
+  })).max(5000),
+});
 
 export type Cue = { id: string; start: number; end: number; en: string; zh: string | null };
 

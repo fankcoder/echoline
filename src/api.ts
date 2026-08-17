@@ -2,6 +2,8 @@ type ApiErrorShape = { error?: { code?: string; message?: string } };
 
 const apiBasePath = import.meta.env.BASE_URL.replace(/\/$/, '');
 
+export function apiUrl(path: string) { return `${apiBasePath}${path}`; }
+
 export class ApiError extends Error {
   status: number;
   code: string;
@@ -9,8 +11,9 @@ export class ApiError extends Error {
 }
 
 export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
-  const response = await fetch(`${apiBasePath}${path}`, {
+  const response = await fetch(apiUrl(path), {
     ...init,
+    credentials: 'same-origin',
     headers: { ...(init.body ? { 'Content-Type': 'application/json' } : {}), ...init.headers },
   });
   if (!response.ok) {

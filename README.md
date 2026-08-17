@@ -22,6 +22,45 @@ npm start
 生产地址为 `http://127.0.0.1:4173`。服务默认只监听本机。
 如通过 Nginx 等反向代理部署到公网，在 `.env` 中设置 `PUBLIC_ORIGIN=https://你的域名`，让浏览器的同源请求通过来源校验。
 
+若站点挂在子路径，例如 `https://anhao.net/learn`，前端构建和服务端必须使用相同路径：
+
+```bash
+VITE_BASE_PATH=/learn/
+APP_BASE_PATH=/learn
+PUBLIC_ORIGIN=https://anhao.net
+npm run build
+```
+
+Nginx 应将 `/learn/` 转发（或映射）到应用，同时保留浏览器可访问的 `/learn/api/` 地址。
+
+## 账户与同步
+
+- 不登录时，生词、短语和复习记录只存于当前浏览器的 `localStorage`，不会发送到服务器。
+- 使用邮箱注册/登录后，这些数据按账户保存到 SQLite 的云端数据库；不同账户互相不可见。
+- 登录时会一次性合并当前浏览器中的本地生词和短语，再清理本地副本；云端已有条目不会被覆盖。
+- 退出后，后续新收藏重新保存在当前浏览器；此前云端数据仍安全保留，重新登录即可恢复。
+- 云端 JSON 导出与导入同样需要登录，导出的生词只包含当前账户。
+
+GitHub 和 Google 登录是可选项。先在对应开发者控制台创建 OAuth 应用，并在服务器 `.env` 中填写：
+
+```bash
+GITHUB_CLIENT_ID=...
+GITHUB_CLIENT_SECRET=...
+GOOGLE_CLIENT_ID=...
+GOOGLE_CLIENT_SECRET=...
+```
+
+为 OAuth 应用登记的回调地址必须与实际部署完全一致。例如部署到 `https://anhao.net/learn` 时：
+
+```text
+https://anhao.net/learn/api/auth/github/callback
+https://anhao.net/learn/api/auth/google/callback
+```
+
+本地默认使用根路径，对应 `http://127.0.0.1:5173/api/auth/github/callback` 和 `http://127.0.0.1:5173/api/auth/google/callback`。OAuth 密钥只保存在服务器环境变量中，不会返回浏览器、写入 `localStorage` 或提交到 Git。
+
+从旧版无账户服务升级时，如服务器 `data/echoline.db` 已有全局生词本，可在首次上线前临时配置 `LEGACY_VOCABULARY_OWNER_EMAIL=你的注册邮箱`。该邮箱首次登录后，旧数据会一次性复制到该账户；未设置时旧数据保留在数据库备份中但不会展示给任何账户，以避免误泄露。
+
 ## 翻译与词典
 
 - DeepLearning.AI 公开课时会导入英文字幕；YouTube 公开视频会使用官方嵌入播放器，并在视频发布者提供公开英文字幕时导入。
@@ -46,7 +85,8 @@ ECDICT 数据来自 [skywind3000/ECDICT](https://github.com/skywind3000/ECDICT)�
 - 课程、稳定课时 ID 和集数顺序
 - 每集英文字幕、官方/免费接口中文翻译和版本哈希
 - 播放位置、有效播放时间、学习会话时间和完成句子
-- 生词、每 10 个词的复习分组、词典缓存和全局设置
+- 登录用户的生词、短语、每 10 个词的复习分组和复习记录；匿名用户则保存在浏览器本地
+- 词典缓存和全局设置
 
 首次运行会迁移旧版本 `localStorage` 的课程、生词、统计和显示偏好。课程管理页可导出或导入 JSON 备份；如需完整数据库快照，在停止服务后复制 `data/echoline.db`。
 

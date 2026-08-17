@@ -1,6 +1,6 @@
 import { mkdirSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 import type { Course, Cue, PublicLesson } from './types.js';
 
@@ -56,6 +56,33 @@ CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL, 
 CREATE TABLE IF NOT EXISTS review_records (
   id TEXT PRIMARY KEY, group_index INTEGER NOT NULL, words TEXT NOT NULL, reviewed_at INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS users (
+  id TEXT PRIMARY KEY, email TEXT NOT NULL UNIQUE, password_hash TEXT,
+  display_name TEXT NOT NULL, avatar_url TEXT, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS oauth_identities (
+  provider TEXT NOT NULL, provider_subject TEXT NOT NULL, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  created_at INTEGER NOT NULL, PRIMARY KEY(provider, provider_subject)
+);
+CREATE TABLE IF NOT EXISTS user_sessions (
+  token_hash TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  expires_at INTEGER NOT NULL, created_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS oauth_states (
+  state_hash TEXT PRIMARY KEY, provider TEXT NOT NULL, expires_at INTEGER NOT NULL, created_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS user_vocabulary (
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE, word TEXT NOT NULL,
+  kind TEXT NOT NULL DEFAULT 'word', display_text TEXT, normalized_text TEXT,
+  meaning TEXT NOT NULL DEFAULT '', note TEXT NOT NULL DEFAULT '', example TEXT NOT NULL DEFAULT '',
+  lesson_id TEXT, cue_id TEXT, added_at INTEGER NOT NULL,
+  review_count INTEGER NOT NULL DEFAULT 0, last_reviewed_at INTEGER,
+  PRIMARY KEY(user_id, word)
+);
+CREATE INDEX IF NOT EXISTS user_vocabulary_by_user_added_at ON user_vocabulary(user_id, added_at, word);
+CREATE TABLE IF NOT EXISTS data_migrations (
+  name TEXT PRIMARY KEY, user_id TEXT REFERENCES users(id) ON DELETE SET NULL, completed_at INTEGER NOT NULL
+);
 CREATE TABLE IF NOT EXISTS jobs (
   id TEXT PRIMARY KEY, lesson_id TEXT NOT NULL, type TEXT NOT NULL, status TEXT NOT NULL,
   progress REAL NOT NULL DEFAULT 0, error TEXT, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
@@ -95,8 +122,10 @@ export class EchoDatabase {
       ['meaning', "TEXT NOT NULL DEFAULT ''"], ['note', "TEXT NOT NULL DEFAULT ''"], ['example', "TEXT NOT NULL DEFAULT ''"],
     ];
     additions.forEach(([name, definition]) => { if (!columns.has(name)) this.db.exec(`ALTER TABLE vocabulary ADD COLUMN ${name} ${definition}`); });
+    const reviewColumns = new Set((this.db.prepare('PRAGMA table_info(review_records)').all() as Array<{ name: string }>).map((column) => column.name));
+    if (!reviewColumns.has('user_id')) this.db.exec('ALTER TABLE review_records ADD COLUMN user_id TEXT');
     this.db.exec("UPDATE vocabulary SET display_text=COALESCE(display_text,word), normalized_text=COALESCE(normalized_text,word), kind=COALESCE(kind,'word')");
-    this.db.prepare('UPDATE schema_meta SET version=2').run();
+    this.db.prepare('UPDATE schema_meta SET version=4').run();
   }
 
   private seed() {
@@ -260,19 +289,91 @@ export class EchoDatabase {
     this.transaction(() => Object.entries(values).forEach(([key, value]) => statement.run(key, JSON.stringify(value), Date.now())));
   }
 
-  listVocabulary() {
-    return (this.db.prepare('SELECT * FROM vocabulary ORDER BY added_at, word').all() as any[]).map((row, index) => ({ word: row.word, text: row.display_text || row.word, kind: row.kind || 'word', meaning: row.meaning || '', note: row.note || '', example: row.example || '', lessonId: row.lesson_id, cueId: row.cue_id, addedAt: row.added_at, reviewCount: row.review_count, lastReviewedAt: row.last_reviewed_at, groupIndex: Math.floor(index / 10) }));
+  createUser(email: string, passwordHash: string | null, displayName: string, avatarUrl: string | null = null) {
+    const id = randomUUID(); const now = Date.now();
+    this.db.prepare('INSERT INTO users(id,email,password_hash,display_name,avatar_url,created_at,updated_at) VALUES(?,?,?,?,?,?,?)')
+      .run(id, email, passwordHash, displayName, avatarUrl, now, now);
+    return this.getUser(id)!;
   }
 
-  toggleVocabulary(word: string, lessonId?: string | null, cueId?: string | null): boolean {
+  getUser(id: string) {
+    const row = this.db.prepare('SELECT * FROM users WHERE id=?').get(id) as any;
+    return row ? this.toPublicUser(row) : null;
+  }
+
+  getUserByEmail(email: string) {
+    const row = this.db.prepare('SELECT * FROM users WHERE email=?').get(email) as any;
+    return row || null;
+  }
+
+  getUserByIdentity(provider: string, providerSubject: string) {
+    const row = this.db.prepare('SELECT u.* FROM oauth_identities oi JOIN users u ON u.id=oi.user_id WHERE oi.provider=? AND oi.provider_subject=?').get(provider, providerSubject) as any;
+    return row ? this.toPublicUser(row) : null;
+  }
+
+  addOAuthIdentity(provider: string, providerSubject: string, userId: string) {
+    this.db.prepare('INSERT INTO oauth_identities(provider,provider_subject,user_id,created_at) VALUES(?,?,?,?)').run(provider, providerSubject, userId, Date.now());
+  }
+
+  createSession(userId: string, token: string, expiresAt: number) {
+    this.db.prepare('INSERT INTO user_sessions(token_hash,user_id,expires_at,created_at) VALUES(?,?,?,?)').run(this.hashSecret(token), userId, expiresAt, Date.now());
+  }
+
+  getSessionUser(token: string) {
+    const row = this.db.prepare('SELECT u.* FROM user_sessions s JOIN users u ON u.id=s.user_id WHERE s.token_hash=? AND s.expires_at>?').get(this.hashSecret(token), Date.now()) as any;
+    return row ? this.toPublicUser(row) : null;
+  }
+
+  deleteSession(token: string) {
+    this.db.prepare('DELETE FROM user_sessions WHERE token_hash=?').run(this.hashSecret(token));
+  }
+
+  createOAuthState(state: string, provider: string, expiresAt: number) {
+    this.db.prepare('INSERT INTO oauth_states(state_hash,provider,expires_at,created_at) VALUES(?,?,?,?)').run(this.hashSecret(state), provider, expiresAt, Date.now());
+  }
+
+  consumeOAuthState(state: string, provider: string) {
+    const hash = this.hashSecret(state); const now = Date.now();
+    return this.transaction(() => {
+      const row = this.db.prepare('SELECT state_hash FROM oauth_states WHERE state_hash=? AND provider=? AND expires_at>?').get(hash, provider, now) as { state_hash: string } | undefined;
+      this.db.prepare('DELETE FROM oauth_states WHERE state_hash=?').run(hash);
+      this.db.prepare('DELETE FROM oauth_states WHERE expires_at<=?').run(now);
+      return Boolean(row);
+    });
+  }
+
+  listVocabulary(userId?: string) {
+    const rows = (userId
+      ? this.db.prepare('SELECT * FROM user_vocabulary WHERE user_id=? ORDER BY added_at, word').all(userId)
+      : this.db.prepare('SELECT * FROM vocabulary ORDER BY added_at, word').all()) as any[];
+    return rows.map((row, index) => this.toVocabulary(row, index));
+  }
+
+  toggleVocabulary(word: string, lessonId?: string | null, cueId?: string | null, userId?: string): boolean {
     const normalized = word.toLowerCase().trim();
+    if (userId) {
+      if (this.db.prepare('SELECT word FROM user_vocabulary WHERE user_id=? AND word=?').get(userId, normalized)) { this.db.prepare('DELETE FROM user_vocabulary WHERE user_id=? AND word=?').run(userId, normalized); return false; }
+      this.db.prepare('INSERT INTO user_vocabulary(user_id,word,kind,display_text,normalized_text,lesson_id,cue_id,added_at) VALUES(?,?,?,?,?,?,?,?)').run(userId, normalized, 'word', normalized, normalized, lessonId || null, cueId || null, Date.now());
+      return true;
+    }
     if (this.db.prepare('SELECT word FROM vocabulary WHERE word=?').get(normalized)) { this.db.prepare('DELETE FROM vocabulary WHERE word=?').run(normalized); return false; }
     this.db.prepare('INSERT INTO vocabulary(word,kind,display_text,normalized_text,lesson_id,cue_id,added_at) VALUES(?,?,?,?,?,?,?)').run(normalized, 'word', normalized, normalized, lessonId || null, cueId || null, Date.now());
     return true;
   }
 
-  addPhrase(text: string, meaning: string, note = '', example = '', lessonId?: string | null, cueId?: string | null) {
+  addPhrase(text: string, meaning: string, note = '', example = '', lessonId?: string | null, cueId?: string | null, userId?: string) {
     const displayText = text.replace(/\s+/g, ' ').trim(); const normalized = displayText.toLowerCase();
+    if (userId) {
+      const existing = this.db.prepare('SELECT * FROM user_vocabulary WHERE user_id=? AND word=?').get(userId, normalized) as any;
+      if (existing) {
+        if (existing.kind !== 'phrase') throw new Error('这个内容已经在生词本中');
+        this.db.prepare('UPDATE user_vocabulary SET meaning=?,note=?,example=? WHERE user_id=? AND word=?').run(meaning.trim(), note.trim(), example.trim(), userId, normalized);
+        return { saved: false, item: this.listVocabulary(userId).find((item) => item.word === normalized) };
+      }
+      this.db.prepare('INSERT INTO user_vocabulary(user_id,word,kind,display_text,normalized_text,meaning,note,example,lesson_id,cue_id,added_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)')
+        .run(userId, normalized, 'phrase', displayText, normalized, meaning.trim(), note.trim(), example.trim(), lessonId || null, cueId || null, Date.now());
+      return { saved: true, item: this.listVocabulary(userId).find((item) => item.word === normalized) };
+    }
     const existing = this.db.prepare('SELECT * FROM vocabulary WHERE word=?').get(normalized) as any;
     if (existing) {
       if (existing.kind !== 'phrase') throw new Error('这个内容已经在生词本中');
@@ -284,8 +385,15 @@ export class EchoDatabase {
     return { saved: true, item: this.listVocabulary().find((item) => item.word === normalized) };
   }
 
-  updatePhrase(normalizedText: string, text: string, meaning: string, note = '', example = '') {
+  updatePhrase(normalizedText: string, text: string, meaning: string, note = '', example = '', userId?: string) {
     const normalized = normalizedText.toLowerCase().replace(/\s+/g, ' ').trim(); const displayText = text.replace(/\s+/g, ' ').trim(); const nextNormalized = displayText.toLowerCase();
+    if (userId) {
+      const row = this.db.prepare('SELECT kind FROM user_vocabulary WHERE user_id=? AND word=?').get(userId, normalized) as { kind: string } | undefined;
+      if (!row || row.kind !== 'phrase') return 'not_found';
+      if (nextNormalized !== normalized && this.db.prepare('SELECT word FROM user_vocabulary WHERE user_id=? AND word=?').get(userId, nextNormalized)) return 'duplicate';
+      this.db.prepare('UPDATE user_vocabulary SET word=?,display_text=?,normalized_text=?,meaning=?,note=?,example=? WHERE user_id=? AND word=?').run(nextNormalized, displayText, nextNormalized, meaning.trim(), note.trim(), example.trim(), userId, normalized);
+      return 'updated';
+    }
     const row = this.db.prepare('SELECT kind FROM vocabulary WHERE word=?').get(normalized) as { kind: string } | undefined;
     if (!row || row.kind !== 'phrase') return 'not_found';
     if (nextNormalized !== normalized && this.db.prepare('SELECT word FROM vocabulary WHERE word=?').get(nextNormalized)) return 'duplicate';
@@ -293,17 +401,45 @@ export class EchoDatabase {
     return 'updated';
   }
 
-  removePhrase(normalizedText: string) {
+  removePhrase(normalizedText: string, userId?: string) {
     const normalized = normalizedText.toLowerCase().replace(/\s+/g, ' ').trim();
+    if (userId) return this.db.prepare("DELETE FROM user_vocabulary WHERE user_id=? AND word=? AND kind='phrase'").run(userId, normalized).changes > 0;
     return this.db.prepare("DELETE FROM vocabulary WHERE word=? AND kind='phrase'").run(normalized).changes > 0;
   }
 
-  recordReview(groupIndex: number, items: Array<{ word: string; kind?: string }>) {
+  recordReview(groupIndex: number, items: Array<{ word: string; kind?: string }>, userId?: string) {
     const now = Date.now();
     this.transaction(() => {
-      this.db.prepare('INSERT INTO review_records(id,group_index,words,reviewed_at) VALUES(?,?,?,?)').run(randomUUID(), groupIndex, JSON.stringify(items), now);
-      const update = this.db.prepare('UPDATE vocabulary SET review_count=review_count+1,last_reviewed_at=? WHERE word=?');
-      items.forEach((item) => update.run(now, item.word.toLowerCase().trim()));
+      this.db.prepare('INSERT INTO review_records(id,group_index,words,reviewed_at,user_id) VALUES(?,?,?,?,?)').run(randomUUID(), groupIndex, JSON.stringify(items), now, userId || null);
+      const update = userId ? this.db.prepare('UPDATE user_vocabulary SET review_count=review_count+1,last_reviewed_at=? WHERE user_id=? AND word=?') : this.db.prepare('UPDATE vocabulary SET review_count=review_count+1,last_reviewed_at=? WHERE word=?');
+      items.forEach((item) => userId ? update.run(now, userId, item.word.toLowerCase().trim()) : update.run(now, item.word.toLowerCase().trim()));
+    });
+  }
+
+  syncUserVocabulary(userId: string, items: Array<{ word: string; text?: string; kind?: string; meaning?: string; note?: string; example?: string; lessonId?: string | null; cueId?: string | null; addedAt?: number; reviewCount?: number; lastReviewedAt?: number | null }>) {
+    const seen = new Set<string>();
+    const statement = this.db.prepare(`INSERT OR IGNORE INTO user_vocabulary(user_id,word,kind,display_text,normalized_text,meaning,note,example,lesson_id,cue_id,added_at,review_count,last_reviewed_at)
+      VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`);
+    this.transaction(() => items.forEach((item) => {
+      const word = typeof item.word === 'string' ? item.word.toLowerCase().replace(/\s+/g, ' ').trim() : '';
+      const kind = item.kind === 'phrase' ? 'phrase' : 'word';
+      if (!word || seen.has(word) || (kind === 'phrase' && !item.meaning?.trim())) return;
+      seen.add(word);
+      const addedAt = typeof item.addedAt === 'number' && Number.isFinite(item.addedAt) ? item.addedAt : Date.now();
+      statement.run(userId, word, kind, item.text?.trim() || word, word, item.meaning?.trim() || '', item.note?.trim() || '', item.example?.trim() || '', item.lessonId || null, item.cueId || null, addedAt, Math.max(0, Number(item.reviewCount) || 0), item.lastReviewedAt || null);
+    }));
+    return this.listVocabulary(userId);
+  }
+
+  claimLegacyVocabulary(userId: string) {
+    return this.transaction(() => {
+      const migrationName = 'legacy_global_vocabulary_v1';
+      if (this.db.prepare('SELECT name FROM data_migrations WHERE name=?').get(migrationName)) return 0;
+      const result = this.db.prepare(`INSERT OR IGNORE INTO user_vocabulary(user_id,word,kind,display_text,normalized_text,meaning,note,example,lesson_id,cue_id,added_at,review_count,last_reviewed_at)
+        SELECT ?,word,COALESCE(kind,'word'),COALESCE(display_text,word),COALESCE(normalized_text,word),COALESCE(meaning,''),COALESCE(note,''),COALESCE(example,''),lesson_id,cue_id,added_at,review_count,last_reviewed_at FROM vocabulary`)
+        .run(userId);
+      this.db.prepare('INSERT INTO data_migrations(name,user_id,completed_at) VALUES(?,?,?)').run(migrationName, userId, Date.now());
+      return result.changes;
     });
   }
 
@@ -322,10 +458,22 @@ export class EchoDatabase {
   }
   saveTranslations(lessonId: string, sourceHash: string, rows: Array<{ id: string; text: string }>, provider: string, model: string, promptVersion: string) { const statement = this.db.prepare('INSERT OR REPLACE INTO translations(lesson_id,cue_id,source_hash,target_language,provider,model,prompt_version,text,created_at) VALUES(?,?,?,?,?,?,?,?,?)'); this.transaction(() => rows.forEach((row) => statement.run(lessonId, row.id, sourceHash, 'zh-CN', provider, model, promptVersion, row.text, Date.now()))); }
 
-  exportData() {
+  exportData(userId?: string) {
     const courses = this.listCourses();
     const lessonIds = [...new Set(courses.flatMap((course) => course.lessons.map((lesson) => lesson.id)))];
-    return { version: 2, exportedAt: Date.now(), courses, progress: lessonIds.map((lessonId) => ({ lessonId, ...this.getProgress(lessonId) })), vocabulary: this.listVocabulary(), settings: this.getSettings() };
+    return { version: 2, exportedAt: Date.now(), courses, progress: lessonIds.map((lessonId) => ({ lessonId, ...this.getProgress(lessonId) })), vocabulary: this.listVocabulary(userId), settings: this.getSettings() };
+  }
+
+  private hashSecret(value: string) {
+    return createHash('sha256').update(value).digest('hex');
+  }
+
+  private toPublicUser(row: any) {
+    return { id: row.id, email: row.email, displayName: row.display_name, avatarUrl: row.avatar_url || null };
+  }
+
+  private toVocabulary(row: any, index: number) {
+    return { word: row.word, text: row.display_text || row.word, kind: row.kind || 'word', meaning: row.meaning || '', note: row.note || '', example: row.example || '', lessonId: row.lesson_id, cueId: row.cue_id, addedAt: row.added_at, reviewCount: row.review_count, lastReviewedAt: row.last_reviewed_at, groupIndex: Math.floor(index / 10) };
   }
 
   private toPublicLesson(row: any): PublicLesson {
