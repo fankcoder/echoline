@@ -456,12 +456,20 @@ export class EchoDatabase {
   }
 
   recordReview(groupIndex: number, items: Array<{ word: string; kind?: string }>, userId?: string) {
+    const group = this.listVocabulary(userId).slice(groupIndex * 10, groupIndex * 10 + 10);
+    const supplied = new Set(items.map((item) => item.word.toLowerCase().replace(/\s+/g, ' ').trim()));
+    const isCompleteGroup = group.length > 0
+      && supplied.size === group.length
+      && items.length === group.length
+      && group.every((item) => supplied.has(item.word));
+    if (!isCompleteGroup) return false;
     const now = Date.now();
     this.transaction(() => {
-      this.db.prepare('INSERT INTO review_records(id,group_index,words,reviewed_at,user_id) VALUES(?,?,?,?,?)').run(randomUUID(), groupIndex, JSON.stringify(items), now, userId || null);
+      this.db.prepare('INSERT INTO review_records(id,group_index,words,reviewed_at,user_id) VALUES(?,?,?,?,?)').run(randomUUID(), groupIndex, JSON.stringify(group.map((item) => ({ word: item.word, kind: item.kind }))), now, userId || null);
       const update = userId ? this.db.prepare('UPDATE user_vocabulary SET review_count=review_count+1,last_reviewed_at=? WHERE user_id=? AND word=?') : this.db.prepare('UPDATE vocabulary SET review_count=review_count+1,last_reviewed_at=? WHERE word=?');
-      items.forEach((item) => userId ? update.run(now, userId, item.word.toLowerCase().trim()) : update.run(now, item.word.toLowerCase().trim()));
+      group.forEach((item) => userId ? update.run(now, userId, item.word) : update.run(now, item.word));
     });
+    return true;
   }
 
   syncUserVocabulary(userId: string, items: Array<{ word: string; text?: string; kind?: string; meaning?: string; note?: string; example?: string; lessonId?: string | null; cueId?: string | null; addedAt?: number; reviewCount?: number; lastReviewedAt?: number | null }>) {

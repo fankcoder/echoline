@@ -157,7 +157,10 @@ describe('local production API', () => {
     const duplicate = await app.inject({ method: 'POST', url: '/api/phrases', headers: { cookie: alice.cookie }, payload: { phrase: 'AT THE CUTTING EDGE', meaning: '最先进' } });
     expect(duplicate.statusCode).toBe(200);
     expect((await app.inject({ method: 'POST', url: '/api/vocabulary/toggle', headers: { cookie: alice.cookie }, payload: { word: 'frontier', lessonId, cueId: 'cue-2' } })).statusCode).toBe(200);
-    const review = await app.inject({ method: 'POST', url: '/api/review/0', headers: { cookie: alice.cookie }, payload: { items: [{ word: 'at the cutting edge', kind: 'phrase' }] } });
+    const incompleteReview = await app.inject({ method: 'POST', url: '/api/review/0', headers: { cookie: alice.cookie }, payload: { items: [{ word: 'at the cutting edge', kind: 'phrase' }] } });
+    expect(incompleteReview.statusCode).toBe(409);
+    expect(incompleteReview.json().error.code).toBe('REVIEW_GROUP_CHANGED');
+    const review = await app.inject({ method: 'POST', url: '/api/review/0', headers: { cookie: alice.cookie }, payload: { items: [{ word: 'at the cutting edge', kind: 'phrase' }, { word: 'frontier', kind: 'word' }] } });
     expect(review.statusCode).toBe(200);
     expect(review.json().vocabulary[0].reviewCount).toBe(1);
     const updated = await app.inject({ method: 'PATCH', url: '/api/phrases/at%20the%20cutting%20edge', headers: { cookie: alice.cookie }, payload: { phrase: 'on the cutting edge', meaning: '站在前沿' } });

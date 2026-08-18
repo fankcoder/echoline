@@ -11,6 +11,7 @@ import type { Cue, DictionaryEntry, LessonManifest, VocabularyItem } from '../ty
 
 type Phase = 'idle' | 'listening' | 'pause' | 'repeat' | 'ready';
 type PhraseDraft = { normalized?: string; text: string; cueId: string | null; meaning: string; note: string; example: string };
+type QueuedPlayback = { lessonId: string; cueId: string; start: number };
 const formatTime = (seconds: number) => `${String(Math.floor(seconds / 60)).padStart(2, '0')}:${String(Math.floor(seconds % 60)).padStart(2, '0')}`;
 
 export default function PlayerPage() {
@@ -20,6 +21,7 @@ export default function PlayerPage() {
   const lessonAbortRef = useRef<AbortController | null>(null); const activeLessonRef = useRef(lessonId);
   const phaseRef = useRef<Phase>('idle'); const activeRef = useRef(0); const handledEnd = useRef(false); const repeatIndexRef = useRef(0);
   const completedRef = useRef(new Set<string>()); const progressBase = useRef({ playback: 0, session: 0 }); const progressDelta = useRef({ playback: 0, session: 0 }); const lastMediaTime = useRef(0);
+  const queuedPlaybackRef = useRef<QueuedPlayback | null>(null); const playbackRefreshInFlightRef = useRef(false); const automaticReconnectAttemptedRef = useRef(false);
   const [manifest, setManifest] = useState<LessonManifest | null>(null); const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading'); const [error, setError] = useState('');
   const [isPlaying, setIsPlaying] = useState(false); const [buffering, setBuffering] = useState(false); const [currentTime, setCurrentTime] = useState(0); const [duration, setDuration] = useState(0);
   const [mediaReady, setMediaReady] = useState(false); const [playbackHint, setPlaybackHint] = useState('');
@@ -44,6 +46,7 @@ export default function PlayerPage() {
     lessonAbortRef.current?.abort(); const controller = new AbortController(); lessonAbortRef.current = controller;
     const version = ++requestVersion.current;
     videoRef.current?.pause(); youtubeRef.current?.pause(); hlsRef.current?.destroy(); hlsRef.current = null;
+    queuedPlaybackRef.current = null; playbackRefreshInFlightRef.current = false; automaticReconnectAttemptedRef.current = false;
     setManifest(null); setStatus('loading'); setError(''); setQuery(''); setCurrentTime(0); setDuration(0); setMediaReady(false); setPlaybackHint(''); setActiveIndex(0); activeRef.current = 0; repeatIndexRef.current = 0; setRepeatIndex(0); setPhase('idle'); setCountdown(0); setTranslatingCueIds(new Set()); setSavingFavoriteCueIds(new Set()); completedRef.current = new Set(); progressDelta.current = { playback: 0, session: 0 };
     try {
       let result = await api<LessonManifest>(force ? `/api/lessons/${id}/refresh` : `/api/lessons/${id}`, { method: force ? 'POST' : 'GET', signal: controller.signal });
@@ -57,43 +60,20 @@ export default function PlayerPage() {
 
   useEffect(() => { void loadLesson(lessonId); return () => { requestVersion.current += 1; lessonAbortRef.current?.abort(); }; }, [lessonId, loadLesson]);
 
-  const refreshPlayback = useCallback(async () => {
-    setMediaReady(false); setBuffering(true); setPlaybackHint('视频暂时不可用，正在重新获取播放链接…');
+  const refreshPlayback = useCallback(async ({ automatic = false }: { automatic?: boolean } = {}) => {
+    if (playbackRefreshInFlightRef.current) return;
+    if (!automatic) automaticReconnectAttemptedRef.current = false;
+    playbackRefreshInFlightRef.current = true;
+    setMediaReady(false); setBuffering(true); setPlaybackHint(automatic ? '视频连接异常，正在自动重新连接…' : '正在重新获取播放链接…');
     try {
       const next = await api<LessonManifest>(`/api/lessons/${lessonId}/refresh`, { method: 'POST' });
       if (activeLessonRef.current === lessonId && next.lesson.id === lessonId) setManifest(next);
     } catch {
       if (activeLessonRef.current === lessonId) { setBuffering(false); setPlaybackHint('视频暂时不可用，字幕仍可阅读。请稍后重新连接。'); }
+    } finally {
+      playbackRefreshInFlightRef.current = false;
     }
   }, [lessonId]);
-
-  useEffect(() => {
-    const video = videoRef.current; const playback = manifest?.playback; const mediaUrl = playback?.kind === 'hls' ? playback.mediaUrl : null;
-    const startPosition = manifest?.progress.positionSeconds || 0; const lessonDuration = manifest?.lesson.duration || 0;
-    if (!video || !mediaUrl) {
-      if (!manifest?.playback) setMediaReady(false);
-      return;
-    }
-    let refreshAttempted = false; video.pause(); video.removeAttribute('src'); video.load(); setIsPlaying(false); setBuffering(true); setMediaReady(false); setPlaybackHint('');
-    const fail = (message: string) => { setMediaReady(false); setBuffering(false); setPlaybackHint(message); };
-    const restore = () => { if (startPosition > 0 && startPosition < video.duration - 2) video.currentTime = startPosition; setDuration(video.duration || lessonDuration); };
-    const ready = () => { setMediaReady(true); setBuffering(false); setPlaybackHint(''); };
-    const onError = () => fail('视频暂时不可用，字幕仍可阅读。请重新连接后再播放。');
-    video.addEventListener('loadedmetadata', restore); video.addEventListener('canplay', ready); video.addEventListener('error', onError);
-    if (/\.m3u8(?:$|\?)/i.test(mediaUrl) && video.canPlayType('application/vnd.apple.mpegurl')) video.src = mediaUrl;
-    else if (/\.m3u8(?:$|\?)/i.test(mediaUrl) && Hls.isSupported()) {
-      const hls = new Hls({ enableWorker: true, maxBufferLength: 30 }); hlsRef.current = hls; hls.loadSource(mediaUrl); hls.attachMedia(video);
-      hls.on(Hls.Events.ERROR, (_event, info) => {
-        if (!info.fatal) return;
-        if (info.type === Hls.ErrorTypes.NETWORK_ERROR && !refreshAttempted) { refreshAttempted = true; hls.startLoad(); }
-        else if (info.type === Hls.ErrorTypes.MEDIA_ERROR && !refreshAttempted) { refreshAttempted = true; hls.recoverMediaError(); }
-        else { hls.destroy(); fail('视频暂时不可用，正在重新获取播放链接…'); void refreshPlayback(); }
-      });
-    } else video.src = mediaUrl;
-    return () => { video.removeEventListener('loadedmetadata', restore); video.removeEventListener('canplay', ready); video.removeEventListener('error', onError); hlsRef.current?.destroy(); hlsRef.current = null; };
-  // Media must only be rebuilt when the playback token changes.
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [manifest?.playback, lessonId, refreshPlayback]);
 
   const pauseMedia = useCallback(() => {
     if (isYouTubePlayback) youtubeRef.current?.pause();
@@ -113,17 +93,66 @@ export default function PlayerPage() {
   }, [isYouTubePlayback]);
   const mediaCanPlay = useCallback(() => isYouTubePlayback || Boolean(videoRef.current && videoRef.current.readyState >= HTMLMediaElement.HAVE_FUTURE_DATA), [isYouTubePlayback]);
 
+  const resumeQueuedPlayback = useCallback(() => {
+    const queued = queuedPlaybackRef.current;
+    if (!queued || queued.lessonId !== lessonId || !mediaCanPlay()) return;
+    queuedPlaybackRef.current = null;
+    setBuffering(false); setPlaybackHint('');
+    void playMedia().catch(() => {
+      if (!queuedPlaybackRef.current) queuedPlaybackRef.current = queued;
+      setPhase('idle'); setPlaybackHint(mediaCanPlay() ? '视频暂时无法开始播放，请稍后重试。' : '正在缓冲本句，完成后将自动播放。');
+    });
+  }, [lessonId, mediaCanPlay, playMedia, setPhase]);
+
+  useEffect(() => {
+    const video = videoRef.current; const playback = manifest?.playback; const mediaUrl = playback?.kind === 'hls' ? playback.mediaUrl : null;
+    const queued = queuedPlaybackRef.current;
+    const startPosition = queued?.lessonId === lessonId ? queued.start : manifest?.progress.positionSeconds || 0; const lessonDuration = manifest?.lesson.duration || 0;
+    if (!video || !mediaUrl) {
+      if (!manifest?.playback) setMediaReady(false);
+      return;
+    }
+    let refreshAttempted = false; video.pause(); video.removeAttribute('src'); video.load(); setIsPlaying(false); setBuffering(true); setMediaReady(false); setPlaybackHint('');
+    const fail = (message: string) => { setMediaReady(false); setBuffering(false); setPlaybackHint(message); };
+    const restore = () => { if (startPosition > 0 && startPosition < video.duration - 2) video.currentTime = startPosition; setDuration(video.duration || lessonDuration); };
+    const ready = () => { setMediaReady(true); setBuffering(false); setPlaybackHint(''); resumeQueuedPlayback(); };
+    const reconnectAfterFatalError = () => {
+      if (playbackRefreshInFlightRef.current) return;
+      if (automaticReconnectAttemptedRef.current) { fail('视频暂时不可用，字幕仍可阅读。请重新连接后再播放。'); return; }
+      automaticReconnectAttemptedRef.current = true;
+      const activeCue = manifest?.cues[activeRef.current];
+      if (!queuedPlaybackRef.current && activeCue) queuedPlaybackRef.current = { lessonId, cueId: activeCue.id, start: activeCue.start + .02 };
+      hlsRef.current?.destroy(); hlsRef.current = null;
+      void refreshPlayback({ automatic: true });
+    };
+    const onError = () => reconnectAfterFatalError();
+    video.addEventListener('loadedmetadata', restore); video.addEventListener('canplay', ready); video.addEventListener('error', onError);
+    if (/\.m3u8(?:$|\?)/i.test(mediaUrl) && video.canPlayType('application/vnd.apple.mpegurl')) video.src = mediaUrl;
+    else if (/\.m3u8(?:$|\?)/i.test(mediaUrl) && Hls.isSupported()) {
+      const hls = new Hls({ enableWorker: true, maxBufferLength: 30 }); hlsRef.current = hls; hls.loadSource(mediaUrl); hls.attachMedia(video);
+      hls.on(Hls.Events.ERROR, (_event, info) => {
+        if (!info.fatal) return;
+        if (info.type === Hls.ErrorTypes.NETWORK_ERROR && !refreshAttempted) { refreshAttempted = true; hls.startLoad(); }
+        else if (info.type === Hls.ErrorTypes.MEDIA_ERROR && !refreshAttempted) { refreshAttempted = true; hls.recoverMediaError(); }
+        else reconnectAfterFatalError();
+      });
+    } else video.src = mediaUrl;
+    return () => { video.removeEventListener('loadedmetadata', restore); video.removeEventListener('canplay', ready); video.removeEventListener('error', onError); hlsRef.current?.destroy(); hlsRef.current = null; };
+  // Media must only be rebuilt when the playback token changes.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [manifest?.playback, lessonId, refreshPlayback, resumeQueuedPlayback]);
+
   const playCue = useCallback((index: number, nextPhase: Phase = 'listening') => {
     const cue = manifest?.cues[index]; if (!cue) return;
     activeRef.current = index; setActiveIndex(index); handledEnd.current = false;
-    if (!mediaReady || !mediaCanPlay()) {
-      setPhase('idle'); setPlaybackHint(manifest?.playback ? '视频正在缓冲，字幕已就绪；请稍候再点击本句播放。' : '正在获取视频播放链接，字幕可以先阅读。');
-      return;
-    }
+    if (!manifest?.playback) { setPhase('idle'); setPlaybackHint('正在获取视频播放链接，字幕可以先阅读。'); return; }
     if (nextPhase === 'listening') { repeatIndexRef.current = 0; setRepeatIndex(0); }
-    setPhase(nextPhase); seekMedia(cue.start + .02);
-    void playMedia().catch(() => { setPhase('idle'); setPlaybackHint(mediaCanPlay() ? '视频暂时无法开始播放，请稍后重试。' : '视频正在缓冲，字幕已就绪；请稍候再点击本句播放。'); });
-  }, [manifest?.cues, manifest?.playback, mediaCanPlay, mediaReady, playMedia, seekMedia, setPhase]);
+    const start = cue.start + .02;
+    queuedPlaybackRef.current = { lessonId, cueId: cue.id, start };
+    setPhase(nextPhase); seekMedia(start); setCurrentTime(start); lastMediaTime.current = start;
+    if (!mediaReady || !mediaCanPlay()) { setBuffering(true); setPlaybackHint('正在缓冲本句，完成后将自动播放。'); return; }
+    resumeQueuedPlayback();
+  }, [lessonId, manifest?.cues, manifest?.playback, mediaCanPlay, mediaReady, resumeQueuedPlayback, seekMedia, setPhase]);
 
   const onMediaTimeUpdate = useCallback((time: number) => {
     if (!manifest) return; setCurrentTime(time);
@@ -158,8 +187,8 @@ export default function PlayerPage() {
   const togglePlay = () => {
     if (!manifest?.playback) return;
     if (isPlaying) { pauseMedia(); return; }
-    if (!mediaReady || !mediaCanPlay()) { setPlaybackHint('视频正在缓冲，字幕已就绪；请稍候再点击播放。'); return; }
     if (studyMode && manifest.cues.length && ['idle', 'ready'].includes(phaseRef.current)) { playCue(activeRef.current); return; }
+    if (!mediaReady || !mediaCanPlay()) { setPlaybackHint('视频正在缓冲，字幕已就绪；请稍候再点击播放。'); return; }
     void playMedia().catch(() => setPlaybackHint('视频暂时无法开始播放，请稍后重试。'));
   };
   const goEpisode = (offset: number) => { const target = selectedCourse?.lessons[lessonIndex + offset]; if (target) { void persistProgress(); navigate(`/learn/${target.id}`); } };
@@ -230,8 +259,8 @@ export default function PlayerPage() {
         <div className="lesson-heading"><div><span className="eyebrow">{selectedCourse?.name || '未分类课程'} · 第 {lessonIndex + 1} 集</span><h1>{manifest.lesson.title}</h1></div><div className="lesson-side"><div className="course-actions"><select value={selectedCourse?.id || ''} onChange={(event) => changeCourse(event.target.value)} aria-label="选择课程">{data!.courses.map((course) => <option value={course.id} key={course.id}>{course.name} ({course.lessons.length})</option>)}</select><button className="save-course-button" onClick={async () => { if (!selectedCourse) return; await api(`/api/courses/${selectedCourse.id}/lessons`, { method: 'POST', ...jsonBody({ sourceUrl: manifest.lesson.sourceUrl, lessonId: manifest.lesson.id }) }); await refresh(); notify('已保存到课程，重复内容不会再次添加'); }}><Save size={14} />保存到课程</button></div><div className="episode-navigation"><button disabled={lessonIndex <= 0} onClick={() => goEpisode(-1)}><ChevronLeft size={15} />上一集</button><span>{lessonIndex >= 0 ? `${lessonIndex + 1} / ${selectedCourse.lessons.length}` : '未加入课程'}</span><button disabled={lessonIndex < 0 || lessonIndex >= selectedCourse.lessons.length - 1} onClick={() => goEpisode(1)}>下一集<ChevronRight size={15} /></button></div></div></div>
         <div className={`video-stage ${videoHidden ? 'video-hidden' : ''}`}>
           {youtubeVideoId
-            ? <YouTubePlayer ref={youtubeRef} videoId={youtubeVideoId} startAt={manifest.progress.positionSeconds} onReady={(nextDuration) => { youtubeRef.current?.setVolume(volume); youtubeRef.current?.setPlaybackRate(speed); setDuration(nextDuration || manifest.lesson.duration || 0); setMediaReady(true); setBuffering(false); setPlaybackHint(''); }} onTimeUpdate={onMediaTimeUpdate} onPlaying={() => { setIsPlaying(true); setBuffering(false); setMediaReady(true); setPlaybackHint(''); }} onPaused={() => setIsPlaying(false)} onBuffering={() => setBuffering(true)} onEnded={() => setIsPlaying(false)} onError={() => { setIsPlaying(false); setBuffering(false); setMediaReady(false); setPlaybackHint('YouTube 视频暂时无法播放，请稍后重试。'); }} />
-            : <video ref={videoRef} crossOrigin="anonymous" playsInline onClick={togglePlay} onTimeUpdate={(event) => onMediaTimeUpdate(event.currentTarget.currentTime)} onPlay={() => setIsPlaying(true)} onPause={() => setIsPlaying(false)} onWaiting={() => { setBuffering(true); setMediaReady(false); }} onPlaying={() => { setIsPlaying(true); setBuffering(false); setMediaReady(true); setPlaybackHint(''); }} />}
+            ? <YouTubePlayer ref={youtubeRef} videoId={youtubeVideoId} startAt={manifest.progress.positionSeconds} onReady={(nextDuration) => { youtubeRef.current?.setVolume(volume); youtubeRef.current?.setPlaybackRate(speed); setDuration(nextDuration || manifest.lesson.duration || 0); setMediaReady(true); setBuffering(false); setPlaybackHint(''); resumeQueuedPlayback(); }} onTimeUpdate={onMediaTimeUpdate} onPlaying={() => { setIsPlaying(true); setBuffering(false); setMediaReady(true); setPlaybackHint(''); }} onPaused={() => setIsPlaying(false)} onBuffering={() => setBuffering(true)} onEnded={() => setIsPlaying(false)} onError={() => { setIsPlaying(false); setBuffering(false); setMediaReady(false); setPlaybackHint('YouTube 视频暂时无法播放，请稍后重试。'); }} />
+            : <video ref={videoRef} crossOrigin="anonymous" playsInline onClick={togglePlay} onTimeUpdate={(event) => onMediaTimeUpdate(event.currentTarget.currentTime)} onPlay={() => setIsPlaying(true)} onPause={() => setIsPlaying(false)} onWaiting={() => setBuffering(true)} onPlaying={() => { setIsPlaying(true); setBuffering(false); setMediaReady(true); setPlaybackHint(''); }} />}
           {videoHidden && <button className="audio-only" onClick={togglePlay}><EyeOff /><span>仅听音频</span><strong>{manifest.lesson.title}</strong></button>}
           {!videoHidden && !isPlaying && !buffering && <button className="big-play" onClick={togglePlay} aria-label="播放"><Play fill="currentColor" /></button>}
           {buffering && <div className="stage-status"><LoaderCircle className="spin" />缓冲中</div>}

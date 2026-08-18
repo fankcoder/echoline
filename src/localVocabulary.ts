@@ -66,7 +66,15 @@ export function removeLocalPhrase(items: VocabularyItem[], word: string) {
   return writeLocalVocabulary(items.filter((item) => item.word !== normalized));
 }
 
-export function reviewLocalVocabulary(items: VocabularyItem[], words: string[]) {
-  const selected = new Set(words.map(normalize)); const reviewedAt = Date.now();
-  return writeLocalVocabulary(items.map((item) => selected.has(item.word) ? { ...item, reviewCount: item.reviewCount + 1, lastReviewedAt: reviewedAt } : item));
+export function reviewLocalVocabulary(items: VocabularyItem[], groupIndex: number, words: string[]) {
+  const normalizedItems = withGroups(items);
+  const group = normalizedItems.slice(groupIndex * 10, groupIndex * 10 + 10);
+  const selected = new Set(words.map(normalize));
+  const isCompleteGroup = group.length > 0
+    && selected.size === group.length
+    && words.length === group.length
+    && group.every((item) => selected.has(item.word));
+  if (!isCompleteGroup) throw new Error('复习组内容已变化，请重新开始本组');
+  const reviewedAt = Date.now();
+  return writeLocalVocabulary(normalizedItems.map((item) => selected.has(item.word) ? { ...item, reviewCount: item.reviewCount + 1, lastReviewedAt: reviewedAt } : item));
 }

@@ -149,7 +149,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       applyVocabulary(result.vocabulary);
       return;
     }
-    applyVocabulary(reviewLocalVocabulary(data?.vocabulary || [], items.map((item) => item.word)));
+    applyVocabulary(reviewLocalVocabulary(data?.vocabulary || [], group, items.map((item) => item.word)));
   }, [applyVocabulary, data?.user, data?.vocabulary]);
 
   const logout = useCallback(async () => { await api('/api/auth/logout', { method: 'POST' }); await refresh(); }, [refresh]);
